@@ -41,15 +41,6 @@ loop {
 }
 ```
 
-For servers without tools, omit the type parameter:
-
-```rust
-let mut server = McpServer::builder()
-    .name("my-server")
-    .version("1.0.0")
-    .build();
-```
-
 ## Feature Flags
 
 - `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
