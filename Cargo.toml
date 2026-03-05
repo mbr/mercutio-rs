@@ -23,4 +23,4 @@ tokio = { version = "1", features = ["io-std", "io-util"], optional = true }
 tracing = "0.1"
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

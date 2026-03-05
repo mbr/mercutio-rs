@@ -96,9 +96,11 @@ async fn main() -> Result<(), mercutio::io::tokio::IoError> {
         .version("1.0.0")
         .build();
 
-    run_stdio(server, |tool| match tool {
-        MyTools::GetWeather(input, responder) => {
-            responder.success(format!("Weather in {}: sunny", input.city))
+    run_stdio(server, |tool| async move {
+        match tool {
+            MyTools::GetWeather(input, responder) => {
+                responder.success(format!("Weather in {}: sunny", input.city))
+            }
         }
     }).await
 }

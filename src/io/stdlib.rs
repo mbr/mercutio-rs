@@ -5,9 +5,8 @@
 
 use std::io::{BufRead, BufReader, Write};
 
-use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
-
 pub use super::IoError;
+use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout.
 ///

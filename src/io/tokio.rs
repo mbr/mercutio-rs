@@ -2,45 +2,37 @@
 //!
 //! Runs an MCP server using newline-delimited JSON over stdin/stdout. This is the standard
 //! transport for local MCP servers spawned as child processes.
-//!
-//! # Cancellation Safety
-//!
-//! The [`run_stdio`] function is partially cancellation-safe. If cancelled mid-write, the client
-//! may receive a truncated response. However, each message is serialized to a buffer and written
-//! with a single `write_all` call before flushing, which minimizes the window for partial writes.
 
-use thiserror::Error;
+use std::future::Future;
+
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-use crate::{McpServer, OutgoingMessage, Output, ParseError, ProtocolError, ToolRegistry};
-
-/// Errors from the async stdio transport.
-#[derive(Debug, Error)]
-pub enum IoError {
-    /// I/O operation failed.
-    #[error("IO error")]
-    Io(#[source] std::io::Error),
-
-    /// Failed to parse incoming message.
-    #[error("failed to parse message")]
-    Parse(#[source] ParseError),
-
-    /// Protocol-level error requiring connection close.
-    #[error("protocol error")]
-    Protocol(#[source] ProtocolError),
-}
+pub use super::IoError;
+use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout asynchronously.
 ///
 /// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must return an [`OutgoingMessage`] to send
-/// back to the client.
+/// handler is called for each tool invocation and must return a future that resolves to an
+/// [`OutgoingMessage`].
 ///
 /// Returns when stdin reaches EOF or a protocol error occurs.
 ///
+/// # Warning
+///
+/// Do not use [`println!`], [`print!`], or other stdout-writing macros inside the handler. While
+/// this won't deadlock (unlike the sync version), it will corrupt the JSON-RPC protocol stream.
+/// Use [`eprintln!`] for debug output.
+///
+/// # Cancellation Safety
+///
+/// This function is partially cancellation-safe. If cancelled mid-write, the client may receive a
+/// truncated response. Each message is serialized to a buffer and written with a single
+/// `write_all` call before flushing, which minimizes the window for partial writes.
+///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
 /// use mercutio::{McpServer, io::tokio::run_stdio};
 ///
 /// mercutio::tool_registry! {
@@ -56,17 +48,20 @@ pub enum IoError {
 ///         .version("1.0.0")
 ///         .build();
 ///
-///     run_stdio(server, |tool| match tool {
-///         MyTools::GetWeather(input, responder) => {
-///             responder.success(format!("Weather in {}: sunny", input.city))
+///     run_stdio(server, |tool| async move {
+///         match tool {
+///             MyTools::GetWeather(input, responder) => {
+///                 responder.success(format!("Weather in {}: sunny", input.city))
+///             }
 ///         }
 ///     }).await
 /// }
 /// ```
-pub async fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub async fn run_stdio<R, H, Fut>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> OutgoingMessage,
+    H: FnMut(R) -> Fut,
+    Fut: Future<Output = OutgoingMessage>,
 {
     let stdin = BufReader::new(tokio::io::stdin());
     let stdout = tokio::io::stdout();
@@ -74,7 +69,7 @@ where
 }
 
 /// Runs an MCP server on arbitrary async buffered input/output streams.
-async fn run_on<R, H, I, O>(
+async fn run_on<R, H, Fut, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
@@ -82,7 +77,8 @@ async fn run_on<R, H, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> OutgoingMessage,
+    H: FnMut(R) -> Fut,
+    Fut: Future<Output = OutgoingMessage>,
     I: AsyncBufReadExt + Unpin,
     O: AsyncWriteExt + Unpin,
 {
@@ -102,7 +98,7 @@ where
                 write_message(&mut output, response).await?;
             }
             Output::ToolCall(tool) => {
-                let response = handler(tool);
+                let response = handler(tool).await;
                 write_message(&mut output, response).await?;
             }
             Output::ProtocolError(e) => {
@@ -120,8 +116,7 @@ async fn write_message(
     w: &mut (impl AsyncWriteExt + Unpin),
     msg: OutgoingMessage,
 ) -> Result<(), IoError> {
-    let mut json =
-        serde_json::to_vec(msg.as_inner()).map_err(|e| IoError::Io(std::io::Error::other(e)))?;
+    let mut json = serde_json::to_vec(msg.as_inner()).map_err(IoError::Serialize)?;
     json.push(b'\n');
     w.write_all(&json).await.map_err(IoError::Io)?;
     w.flush().await.map_err(IoError::Io)
@@ -150,7 +145,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| async { unreachable!("no tools") },
         )
         .await;
 
@@ -177,7 +172,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| async { unreachable!("no tools") },
         )
         .await;
 
@@ -194,7 +189,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| async { unreachable!("no tools") },
         )
         .await;
 
