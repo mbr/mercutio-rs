@@ -11,6 +11,8 @@ If you'd rather not wire up your own transport, the `io-*` feature flags provide
 ```rust
 use mercutio::{McpServer, Output};
 
+// Define your tools with the macro - generates input structs and dispatch enum.
+// Field docstrings become JSON Schema descriptions that the LLM sees.
 mercutio::tool_registry! {
     enum MyTools {
         GetWeather("get_weather", "Gets weather for a city") {
@@ -25,12 +27,15 @@ let mut server = McpServer::<MyTools>::builder()
     .version("1.0.0")
     .build();
 
+// You provide the transport - MCP uses newline-delimited JSON
 loop {
     let line = read_line_somehow();
     let msg = mercutio::parse_line(&line)?;
 
     match server.handle(msg) {
+        // Protocol responses (init, tool list, etc.)
         Output::Send(msg) => send(msg.into_inner()),
+        // Tool invocation - handle it and send the response
         Output::ToolCall(MyTools::GetWeather(input, responder)) => {
             let weather = get_weather(&input.city);
             send(responder.success(format!("{}C", weather.temp)).into_inner());
