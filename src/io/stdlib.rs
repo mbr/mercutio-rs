@@ -2,33 +2,12 @@
 //!
 //! Runs an MCP server using newline-delimited JSON over stdin/stdout. This is the standard
 //! transport for local MCP servers spawned as child processes.
-//!
-//! # Deadlock Warning
-//!
-//! This function locks stdout for the duration of the call. Using [`println!`] or other macros
-//! that lock stdout inside the handler will deadlock. Use [`eprintln!`] for debug output.
 
 use std::io::{BufRead, BufReader, Write};
 
-use thiserror::Error;
+use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
-use crate::{McpServer, OutgoingMessage, Output, ParseError, ProtocolError, ToolRegistry};
-
-/// Errors from the stdio transport.
-#[derive(Debug, Error)]
-pub enum IoError {
-    /// I/O operation failed.
-    #[error("IO error")]
-    Io(#[source] std::io::Error),
-
-    /// Failed to parse incoming message.
-    #[error("failed to parse message")]
-    Parse(#[source] ParseError),
-
-    /// Protocol-level error requiring connection close.
-    #[error("protocol error")]
-    Protocol(#[source] ProtocolError),
-}
+pub use super::IoError;
 
 /// Runs an MCP server over stdin/stdout.
 ///
@@ -103,11 +82,11 @@ where
 
         match server.handle(msg) {
             Output::Send(response) => {
-                write_message(&mut output, response).map_err(IoError::Io)?;
+                write_message(&mut output, response)?;
             }
             Output::ToolCall(tool) => {
                 let response = handler(tool);
-                write_message(&mut output, response).map_err(IoError::Io)?;
+                write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {
                 return Err(IoError::Protocol(e));
@@ -120,10 +99,10 @@ where
 }
 
 /// Writes a JSON-RPC message followed by a newline.
-fn write_message(w: &mut impl Write, msg: OutgoingMessage) -> std::io::Result<()> {
-    serde_json::to_writer(&mut *w, msg.as_inner())?;
-    w.write_all(b"\n")?;
-    w.flush()
+fn write_message(w: &mut impl Write, msg: OutgoingMessage) -> Result<(), IoError> {
+    serde_json::to_writer(&mut *w, msg.as_inner()).map_err(IoError::Serialize)?;
+    w.write_all(b"\n").map_err(IoError::Io)?;
+    w.flush().map_err(IoError::Io)
 }
 
 #[cfg(test)]
