@@ -67,19 +67,34 @@ pub enum IoError {
 ///     })
 /// }
 /// ```
-pub fn run_stdio<R, H>(mut server: McpServer<R>, mut handler: H) -> Result<(), IoError>
+pub fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
     H: FnMut(R) -> OutgoingMessage,
 {
     let stdin = std::io::stdin().lock();
-    let mut stdout = std::io::stdout().lock();
-    let mut reader = BufReader::new(stdin);
+    let stdout = std::io::stdout().lock();
+    run_on(BufReader::new(stdin), stdout, server, handler)
+}
+
+/// Runs an MCP server on arbitrary buffered input/output streams.
+fn run_on<R, H, I, O>(
+    mut input: I,
+    mut output: O,
+    mut server: McpServer<R>,
+    mut handler: H,
+) -> Result<(), IoError>
+where
+    R: ToolRegistry,
+    H: FnMut(R) -> OutgoingMessage,
+    I: BufRead,
+    O: Write,
+{
     let mut line = String::new();
 
     loop {
         line.clear();
-        let bytes = reader.read_line(&mut line).map_err(IoError::Io)?;
+        let bytes = input.read_line(&mut line).map_err(IoError::Io)?;
         if bytes == 0 {
             break;
         }
@@ -88,11 +103,11 @@ where
 
         match server.handle(msg) {
             Output::Send(response) => {
-                write_message(&mut stdout, response).map_err(IoError::Io)?;
+                write_message(&mut output, response).map_err(IoError::Io)?;
             }
             Output::ToolCall(tool) => {
                 let response = handler(tool);
-                write_message(&mut stdout, response).map_err(IoError::Io)?;
+                write_message(&mut output, response).map_err(IoError::Io)?;
             }
             Output::ProtocolError(e) => {
                 return Err(IoError::Protocol(e));
@@ -109,4 +124,76 @@ fn write_message(w: &mut impl Write, msg: OutgoingMessage) -> std::io::Result<()
     serde_json::to_writer(&mut *w, msg.as_inner())?;
     w.write_all(b"\n")?;
     w.flush()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::Cursor;
+
+    use super::{IoError, run_on};
+    use crate::{McpServer, NoTools};
+
+    fn test_server() -> McpServer<NoTools> {
+        McpServer::builder().name("test").version("1.0").build()
+    }
+
+    #[test]
+    fn full_session() {
+        let input = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{"jsonrpc":"2.0","id":2,"method":"ping"}
+"#;
+        let mut output = Vec::new();
+
+        let result = run_on(
+            Cursor::new(input),
+            &mut output,
+            test_server(),
+            |_: NoTools| unreachable!("no tools"),
+        );
+
+        assert!(result.is_ok());
+
+        let output_str = String::from_utf8(output).expect("valid utf8");
+        let lines: Vec<&str> = output_str.lines().collect();
+        assert_eq!(lines.len(), 2);
+
+        let init_response: serde_json::Value = serde_json::from_str(lines[0]).expect("valid json");
+        assert_eq!(init_response["id"], 1);
+        assert!(init_response["result"]["protocolVersion"].is_string());
+
+        let ping_response: serde_json::Value = serde_json::from_str(lines[1]).expect("valid json");
+        assert_eq!(ping_response["id"], 2);
+    }
+
+    #[test]
+    fn parse_error() {
+        let input = "not valid json\n";
+        let mut output = Vec::new();
+
+        let result = run_on(
+            Cursor::new(input),
+            &mut output,
+            test_server(),
+            |_: NoTools| unreachable!("no tools"),
+        );
+
+        assert!(matches!(result, Err(IoError::Parse(_))));
+    }
+
+    #[test]
+    fn protocol_error_on_unexpected_message() {
+        let input = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}
+"#;
+        let mut output = Vec::new();
+
+        let result = run_on(
+            Cursor::new(input),
+            &mut output,
+            test_server(),
+            |_: NoTools| unreachable!("no tools"),
+        );
+
+        assert!(matches!(result, Err(IoError::Protocol(_))));
+    }
 }
