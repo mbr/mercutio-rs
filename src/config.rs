@@ -4,10 +4,10 @@ use std::marker::PhantomData;
 
 use rust_mcp_schema::{Implementation, ServerCapabilities, ServerCapabilitiesTools};
 
-use super::{McpServer, Phase, ToolRegistry};
+use crate::{McpServer, Phase, ToolRegistry};
 
 /// Server configuration for MCP initialization.
-pub(super) struct ServerConfig {
+pub(crate) struct ServerConfig {
     /// Server implementation info sent during initialization.
     pub info: Implementation,
     /// Server capabilities advertised to the client.
@@ -32,7 +32,7 @@ pub struct McpServerBuilder<R: ToolRegistry> {
 
 impl<R: ToolRegistry> McpServerBuilder<R> {
     /// Creates a new builder with default values.
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             name: "unnamed-mcp-server".into(),
             version: "0.0.0".into(),
@@ -111,8 +111,7 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 mod tests {
     use rust_mcp_schema::RequestId;
 
-    use super::McpServer;
-    use crate::protocol::{JsonRpcError, ToolDefinition, ToolRegistry};
+    use crate::{JsonRpcError, McpServer, ToolDefinition, ToolRegistry};
 
     /// Minimal tool registry for testing builder behavior.
     enum TestTools {}
@@ -141,7 +140,7 @@ mod tests {
 
     #[test]
     fn tools_disabled_for_no_tools() {
-        use super::super::NoTools;
+        use crate::NoTools;
         let server = McpServer::<NoTools>::builder().build();
         assert!(server.config.capabilities.tools.is_none());
     }

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use rust_mcp_schema::{CallToolResult, ContentBlock, RequestId, ToolInputSchema};
 use serde::Serialize;
 
-use super::JsonRpcError;
+use crate::JsonRpcError;
 
 /// Defines a tool's input type and metadata.
 ///
@@ -58,9 +58,9 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 /// responder.success(ToolResult::error(err.to_string()))
 /// ```
 ///
-/// This differs from [`Responder::error`](super::Responder::error), which returns a JSON-RPC
+/// This differs from [`Responder::error`](crate::Responder::error), which returns a JSON-RPC
 /// error response. Use [`ToolResult::error`] when the tool executed but encountered a domain
-/// error; use [`Responder::error`](super::Responder::error) for protocol-level failures.
+/// error; use [`Responder::error`](crate::Responder::error) for protocol-level failures.
 #[derive(Debug, Serialize)]
 #[serde(transparent)]
 pub struct ToolResult(CallToolResult);
@@ -218,7 +218,7 @@ fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
 /// Registry of available tools.
 ///
 /// Implemented by enums representing the set of tools a server supports. Each variant
-/// corresponds to a tool and contains its parsed input plus a [`Responder`](super::Responder).
+/// corresponds to a tool and contains its parsed input plus a [`Responder`](crate::Responder).
 /// The [`tool_registry`](crate::tool_registry) macro generates this implementation automatically.
 pub trait ToolRegistry: Sized {
     /// Whether tools are enabled. Used to advertise tool capabilities during init.
@@ -372,6 +372,7 @@ macro_rules! tool_registry {
 #[cfg(test)]
 mod tests {
     use super::{NoTools, ToolDefinition, ToolRegistry, ToolResult};
+    use crate::JsonRpcError;
 
     #[test]
     fn no_tools_definitions_empty() {
@@ -387,7 +388,7 @@ mod tests {
         );
         assert!(result.is_err());
         let err = result.unwrap_err();
-        assert!(matches!(err, super::JsonRpcError::MethodNotFound { .. }));
+        assert!(matches!(err, JsonRpcError::MethodNotFound { .. }));
     }
 
     #[test]
