@@ -1,5 +1,11 @@
 //! IO-less MCP protocol implementation.
 
+#![cfg_attr(docsrs, feature(doc_cfg))]
+
+#[cfg(feature = "io-stdlib")]
+#[cfg_attr(docsrs, doc(cfg(feature = "io-stdlib")))]
+pub mod io;
+
 pub mod protocol;
 
 pub use protocol::{

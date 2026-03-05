@@ -4,7 +4,7 @@ A Rust library for building [MCP](https://modelcontextprotocol.io/) servers. `me
 
 This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run it over stdio, HTTP, WebSockets, or anything else without fighting the library.
 
-If you'd rather not wire up your own transport, the `io-*` feature flags will provide ready-made integrations (planned, not yet implemented).
+If you'd rather not wire up your own transport, the `io-*` feature flags provide ready-made integrations.
 
 ## Usage
 
@@ -49,3 +49,34 @@ let mut server = McpServer::builder()
     .version("1.0.0")
     .build();
 ```
+
+## Feature Flags
+
+- `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
+
+### io-stdlib
+
+Runs an MCP server over stdin/stdout with newline-delimited JSON:
+
+```rust
+use mercutio::{io::stdlib::run_stdio, McpServer};
+
+mercutio::tool_registry! {
+    enum MyTools {
+        GetWeather("get_weather", "Gets weather") { city: String },
+    }
+}
+
+let server = McpServer::<MyTools>::builder()
+    .name("my-server")
+    .version("1.0.0")
+    .build();
+
+run_stdio(server, |tool| match tool {
+    MyTools::GetWeather(input, responder) => {
+        responder.success(format!("Weather in {}: sunny", input.city))
+    }
+})?;
+```
+
+Note: `run_stdio` locks stdout for the duration of the call. Using `println!` inside the handler will deadlock; use `eprintln!` for debug output.
