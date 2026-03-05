@@ -49,6 +49,7 @@ loop {
 ## Feature Flags
 
 - `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
+- `io-tokio` - Async stdin/stdout transport using Tokio
 
 ### io-stdlib
 
@@ -73,4 +74,32 @@ run_stdio(server, |tool| match tool {
         responder.success(format!("Weather in {}: sunny", input.city))
     }
 })?;
+```
+
+### io-tokio
+
+Async version using Tokio:
+
+```rust
+use mercutio::{io::tokio::run_stdio, McpServer};
+
+mercutio::tool_registry! {
+    enum MyTools {
+        GetWeather("get_weather", "Gets weather") { city: String },
+    }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), mercutio::io::tokio::IoError> {
+    let server = McpServer::<MyTools>::builder()
+        .name("my-server")
+        .version("1.0.0")
+        .build();
+
+    run_stdio(server, |tool| match tool {
+        MyTools::GetWeather(input, responder) => {
+            responder.success(format!("Weather in {}: sunny", input.city))
+        }
+    }).await
+}
 ```

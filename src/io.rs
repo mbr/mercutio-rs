@@ -6,3 +6,7 @@
 #[cfg(feature = "io-stdlib")]
 #[cfg_attr(docsrs, doc(cfg(feature = "io-stdlib")))]
 pub mod stdlib;
+
+#[cfg(feature = "io-tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "io-tokio")))]
+pub mod tokio;

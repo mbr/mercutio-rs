@@ -2,8 +2,7 @@
 
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(feature = "io-stdlib")]
-#[cfg_attr(docsrs, doc(cfg(feature = "io-stdlib")))]
+#[cfg(any(feature = "io-stdlib", feature = "io-tokio"))]
 pub mod io;
 
 pub mod protocol;

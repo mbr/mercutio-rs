@@ -7,6 +7,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 io-stdlib = []
+io-tokio = ["dep:tokio"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -18,4 +19,8 @@ schemars = "0.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2.0"
+tokio = { version = "1", features = ["io-std", "io-util"], optional = true }
 tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt", "macros"] }
