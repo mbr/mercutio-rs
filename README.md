@@ -6,7 +6,7 @@ This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run i
 
 If you'd rather not wire up your own transport, the `io-*` feature flags provide ready-made integrations.
 
-## Usage
+## Side-effect free usage
 
 ```rust
 use mercutio::{McpServer, Output};
@@ -47,6 +47,8 @@ loop {
 ```
 
 ## Feature Flags
+
+If you do not want/need to implement the IO harness yourself, `mercutio` has a few implementations ready:
 
 - `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
 - `io-tokio` - Async stdin/stdout transport using Tokio
