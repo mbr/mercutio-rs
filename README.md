@@ -78,5 +78,3 @@ run_stdio(server, |tool| match tool {
     }
 })?;
 ```
-
-Note: `run_stdio` locks stdout for the duration of the call. Using `println!` inside the handler will deadlock; use `eprintln!` for debug output.

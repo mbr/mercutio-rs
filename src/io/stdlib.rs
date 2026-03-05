@@ -30,24 +30,6 @@ pub enum IoError {
     Protocol(#[source] ProtocolError),
 }
 
-impl From<std::io::Error> for IoError {
-    fn from(err: std::io::Error) -> Self {
-        IoError::Io(err)
-    }
-}
-
-impl From<ParseError> for IoError {
-    fn from(err: ParseError) -> Self {
-        IoError::Parse(err)
-    }
-}
-
-impl From<ProtocolError> for IoError {
-    fn from(err: ProtocolError) -> Self {
-        IoError::Protocol(err)
-    }
-}
-
 /// Runs an MCP server over stdin/stdout.
 ///
 /// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
@@ -93,20 +75,20 @@ where
 
     loop {
         line.clear();
-        let bytes = reader.read_line(&mut line)?;
+        let bytes = reader.read_line(&mut line).map_err(IoError::Io)?;
         if bytes == 0 {
             break;
         }
 
-        let msg = crate::parse_line(line.trim_end())?;
+        let msg = crate::parse_line(line.trim_end()).map_err(IoError::Parse)?;
 
         match server.handle(msg) {
             Output::Send(response) => {
-                write_message(&mut stdout, response)?;
+                write_message(&mut stdout, response).map_err(IoError::Io)?;
             }
             Output::ToolCall(tool) => {
                 let response = handler(tool);
-                write_message(&mut stdout, response)?;
+                write_message(&mut stdout, response).map_err(IoError::Io)?;
             }
             Output::ProtocolError(e) => {
                 return Err(IoError::Protocol(e));
