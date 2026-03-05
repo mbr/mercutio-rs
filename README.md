@@ -9,7 +9,19 @@ You feed it JSON-RPC messages, it tells you what to do: send a response, handle 
 ```rust
 use mercutio::{McpServer, Output};
 
-let mut server = McpServer::new(config);
+mercutio::tool_registry! {
+    enum MyTools {
+        GetWeather("get_weather", "Gets weather for a city") {
+            /// City name, e.g. "San Francisco".
+            city: String,
+        },
+    }
+}
+
+let mut server = McpServer::<MyTools>::builder()
+    .name("my-server")
+    .version("1.0.0")
+    .build();
 
 loop {
     let line = read_line_somehow();
@@ -17,20 +29,21 @@ loop {
 
     match server.handle(msg) {
         Output::Send(msg) => send(msg.into_inner()),
-        Output::ToolCall(call, responder) => {
-            let result = execute_tool(&call.name, &call.arguments);
-            send(responder.respond(result).into_inner());
-        }
-        Output::ToolList(responder) => {
-            send(responder.success(my_tools()).into_inner());
-        }
-        Output::Ready(client) => log::info!("connected: {}", client.info.name),
-        Output::SendAndClose(msg, err) => {
-            send(msg.into_inner());
-            break;
+        Output::ToolCall(MyTools::GetWeather(input, responder)) => {
+            let weather = get_weather(&input.city);
+            send(responder.success(format!("{}C", weather.temp)).into_inner());
         }
         Output::ProtocolError(err) => break,
         Output::None => {}
     }
 }
+```
+
+For servers without tools, omit the type parameter:
+
+```rust
+let mut server = McpServer::builder()
+    .name("my-server")
+    .version("1.0.0")
+    .build();
 ```
