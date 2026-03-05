@@ -1,8 +1,10 @@
 # mercutio
 
-An MCP server library that doesn't do IO.
+A Rust library for building [MCP](https://modelcontextprotocol.io/) servers. `mercutio` handles the protocol (parsing messages, managing the initialization handshake, dispatching tool calls), while you handle the transport. The core is a pure state machine: feed it JSON-RPC messages, and it returns what to send back.
 
-You feed it JSON-RPC messages, it tells you what to do: send a response, handle a tool call, or close the connection. You handle transport (typically newline-delimited JSON over stdin/stdout).
+This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run it over stdio, HTTP, WebSockets, or anything else without fighting the library.
+
+If you'd rather not wire up your own transport, the `io-*` feature flags will provide ready-made integrations (planned, not yet implemented).
 
 ## Usage
 
