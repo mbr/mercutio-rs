@@ -45,23 +45,27 @@ pub enum IoError {
 ///
 /// # Example
 ///
-/// ```ignore
+/// ```no_run
+/// use mercutio::{McpServer, io::stdlib::run_stdio};
+///
 /// mercutio::tool_registry! {
 ///     enum MyTools {
 ///         GetWeather("get_weather", "Gets weather") { city: String },
 ///     }
 /// }
 ///
-/// let server = McpServer::<MyTools>::builder()
-///     .name("my-server")
-///     .version("1.0.0")
-///     .build();
+/// fn main() -> Result<(), mercutio::io::stdlib::IoError> {
+///     let server = McpServer::<MyTools>::builder()
+///         .name("my-server")
+///         .version("1.0.0")
+///         .build();
 ///
-/// run_stdio(server, |tool| match tool {
-///     MyTools::GetWeather(input, responder) => {
-///         responder.success(format!("Weather in {}: sunny", input.city))
-///     }
-/// })?;
+///     run_stdio(server, |tool| match tool {
+///         MyTools::GetWeather(input, responder) => {
+///             responder.success(format!("Weather in {}: sunny", input.city))
+///         }
+///     })
+/// }
 /// ```
 pub fn run_stdio<R, H>(mut server: McpServer<R>, mut handler: H) -> Result<(), IoError>
 where
