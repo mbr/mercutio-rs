@@ -1,12 +1,13 @@
 //! MCP session identifier type.
 
-use std::{fmt, str::FromStr};
+use std::{fmt, num::ParseIntError, str::FromStr};
 
 use axum::{
     extract::FromRequestParts,
-    http::{StatusCode, request::Parts},
+    http::{StatusCode, header::ToStrError, request::Parts},
 };
 use rand::distr::{Distribution, StandardUniform};
+use thiserror::Error;
 
 /// Header name for the MCP session ID per the spec.
 pub const SESSION_ID_HEADER: &str = "mcp-session-id";
@@ -48,16 +49,9 @@ impl fmt::Debug for McpSessionId {
 }
 
 /// Error returned when parsing an [`McpSessionId`] fails.
-#[derive(Debug, Clone)]
-pub struct ParseSessionIdError;
-
-impl fmt::Display for ParseSessionIdError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid session ID format")
-    }
-}
-
-impl std::error::Error for ParseSessionIdError {}
+#[derive(Clone, Debug, Error)]
+#[error("invalid session ID")]
+pub struct ParseSessionIdError(#[source] ParseIntError);
 
 impl FromStr for McpSessionId {
     type Err = ParseSessionIdError;
@@ -65,35 +59,27 @@ impl FromStr for McpSessionId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         u128::from_str_radix(s, 16)
             .map(McpSessionId)
-            .map_err(|_| ParseSessionIdError)
+            .map_err(ParseSessionIdError)
     }
 }
 
 /// Rejection type when session ID extraction fails.
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum SessionIdRejection {
     /// The `Mcp-Session-Id` header is missing.
+    #[error("missing session ID header")]
     Missing,
-    /// The header value is not valid UTF-8 or failed to parse.
-    Invalid,
-}
-
-impl fmt::Display for SessionIdRejection {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Missing => write!(f, "missing session ID header"),
-            Self::Invalid => write!(f, "invalid session ID"),
-        }
-    }
+    /// The header value is not valid UTF-8.
+    #[error("session ID header not valid UTF-8")]
+    InvalidUtf8(#[source] ToStrError),
+    /// The header value failed to parse as a session ID.
+    #[error("invalid session ID")]
+    InvalidFormat(#[source] ParseSessionIdError),
 }
 
 impl axum::response::IntoResponse for SessionIdRejection {
     fn into_response(self) -> axum::response::Response {
-        let status = match self {
-            Self::Missing => StatusCode::BAD_REQUEST,
-            Self::Invalid => StatusCode::BAD_REQUEST,
-        };
-        (status, self.to_string()).into_response()
+        (StatusCode::BAD_REQUEST, self.to_string()).into_response()
     }
 }
 
@@ -109,15 +95,15 @@ where
             .get(SESSION_ID_HEADER)
             .ok_or(SessionIdRejection::Missing)?;
 
-        let s = value.to_str().map_err(|_| SessionIdRejection::Invalid)?;
-        s.parse().map_err(|_| SessionIdRejection::Invalid)
+        let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
+        s.parse().map_err(SessionIdRejection::InvalidFormat)
     }
 }
 
 /// Extractor for an optional session ID.
 ///
 /// Returns `None` if the header is missing, `Some(id)` if valid, or rejects with
-/// [`SessionIdRejection::Invalid`] if the header is present but malformed.
+/// [`SessionIdRejection`] if the header is present but malformed.
 #[derive(Clone, Copy, Debug)]
 pub struct OptionalSessionId(pub Option<McpSessionId>);
 
@@ -132,8 +118,8 @@ where
             return Ok(Self(None));
         };
 
-        let s = value.to_str().map_err(|_| SessionIdRejection::Invalid)?;
-        let id = s.parse().map_err(|_| SessionIdRejection::Invalid)?;
+        let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
+        let id = s.parse().map_err(SessionIdRejection::InvalidFormat)?;
         Ok(Self(Some(id)))
     }
 }
