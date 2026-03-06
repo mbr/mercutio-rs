@@ -83,10 +83,7 @@ where
                 write_message(&mut output, response)?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = match handler(tool) {
-                    Ok(result) => responder.success(result),
-                    Err(e) => responder.error(e),
-                };
+                let response = responder.respond(handler(tool));
                 write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {

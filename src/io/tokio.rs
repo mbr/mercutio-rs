@@ -123,10 +123,7 @@ where
                 write_message(&mut output, response).await?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = match handler.handle(tool).await {
-                    Ok(result) => responder.success(result),
-                    Err(e) => responder.error(e),
-                };
+                let response = responder.respond(handler.handle(tool).await);
                 write_message(&mut output, response).await?;
             }
             Output::ProtocolError(e) => {
