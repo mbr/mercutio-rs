@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Tool enum variants no longer contain `Responder`; moved to `Output::ToolCall { tool, responder }`.
-- `ToolHandler::handle` now returns `Result<ToolResult, JsonRpcError>`.
+- `ToolHandler::handle` and `io::stdlib` handler now return `ToolResult` directly.
 - `ToolRegistry::parse` no longer takes `id` parameter.
 - `io::tokio::run_stdio` now takes `impl ToolHandler<R>` instead of async closures.
 - Flattened module structure: removed `protocol` module, types now at crate root.

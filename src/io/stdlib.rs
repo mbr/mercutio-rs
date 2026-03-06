@@ -6,7 +6,7 @@
 use std::io::{BufRead, BufReader, Write};
 
 pub use super::IoError;
-use crate::{JsonRpcError, McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
+use crate::{McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
 
 /// Runs an MCP server over stdin/stdout.
 ///
@@ -39,7 +39,7 @@ use crate::{JsonRpcError, McpServer, OutgoingMessage, Output, ToolRegistry, Tool
 ///
 ///     run_stdio(server, |tool| match tool {
 ///         MyTools::GetWeather(input) => {
-///             Ok(format!("Weather in {}: sunny", input.city).into())
+///             format!("Weather in {}: sunny", input.city).into()
 ///         }
 ///     })
 /// }
@@ -47,7 +47,7 @@ use crate::{JsonRpcError, McpServer, OutgoingMessage, Output, ToolRegistry, Tool
 pub fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> Result<ToolResult, JsonRpcError>,
+    H: FnMut(R) -> ToolResult,
 {
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
@@ -63,7 +63,7 @@ fn run_on<R, H, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> Result<ToolResult, JsonRpcError>,
+    H: FnMut(R) -> ToolResult,
     I: BufRead,
     O: Write,
 {
@@ -83,7 +83,7 @@ where
                 write_message(&mut output, response)?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = responder.respond(handler(tool));
+                let response = responder.success(handler(tool));
                 write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {
