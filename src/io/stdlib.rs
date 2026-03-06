@@ -61,7 +61,10 @@ where
 }
 
 /// Runs an MCP server on arbitrary buffered input/output streams.
-fn run_on<R, H, T, E, I, O>(
+///
+/// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
+/// custom transports or testing.
+pub fn run_on<R, H, T, E, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,

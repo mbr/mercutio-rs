@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ToolHandler` trait for async tool handlers with mutable state.
 - `ToolOutput` type for building successful tool responses.
 - `IntoToolResponse` trait for ergonomic handler return types.
+- `io::stdlib::run_on` and `io::tokio::run_on` for custom transports.
 
 ### Changed
 

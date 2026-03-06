@@ -105,7 +105,10 @@ where
 }
 
 /// Runs an MCP server on arbitrary async buffered input/output streams.
-async fn run_on<R, H, I, O>(
+///
+/// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
+/// custom transports or testing.
+pub async fn run_on<R, H, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
