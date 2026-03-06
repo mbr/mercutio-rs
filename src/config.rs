@@ -30,18 +30,6 @@ pub struct McpServerBuilder<R: ToolRegistry> {
     _marker: PhantomData<R>,
 }
 
-impl<R: ToolRegistry> Clone for McpServerBuilder<R> {
-    fn clone(&self) -> Self {
-        Self {
-            name: self.name.clone(),
-            version: self.version.clone(),
-            title: self.title.clone(),
-            instructions: self.instructions.clone(),
-            _marker: PhantomData,
-        }
-    }
-}
-
 impl<R: ToolRegistry> McpServerBuilder<R> {
     /// Creates a new builder with default values.
     pub(crate) fn new() -> Self {

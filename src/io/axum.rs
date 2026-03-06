@@ -75,7 +75,7 @@ where
 /// Shared state for axum handlers.
 struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
     /// Builder for creating new server instances.
-    builder: McpServerBuilder<R>,
+    builder: Arc<McpServerBuilder<R>>,
     /// Session storage holding one [`McpServer`] per active session.
     sessions: SessionMap<R>,
     /// Handler for tool invocations, called when `Output::ToolCall` is returned.
@@ -85,7 +85,7 @@ struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
 impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
     fn clone(&self) -> Self {
         Self {
-            builder: self.builder.clone(),
+            builder: Arc::clone(&self.builder),
             sessions: Arc::clone(&self.sessions),
             handler: self.handler.clone(),
         }
@@ -135,7 +135,7 @@ where
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let state = AppState {
-        builder,
+        builder: Arc::new(builder),
         sessions: Arc::new(RwLock::new(HashMap::new())),
         handler,
     };
