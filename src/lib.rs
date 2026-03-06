@@ -27,7 +27,7 @@
 //!    enumerate available tools and `tools/call` to invoke a tool. The `ping` method is available
 //!    in all phases for connection health checks.
 //!
-//! The server other rejects requests until the handshake completes; [`McpServer::is_ready`] can be
+//! The server otherwise rejects requests until the handshake completes; [`McpServer::is_ready`] can be
 //! used to check this, but is not required.
 //!
 //! # Usage
