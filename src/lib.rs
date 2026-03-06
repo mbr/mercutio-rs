@@ -370,8 +370,8 @@ impl<R: ToolRegistry> McpServer<R> {
             (_, JsonrpcMessage::Request(req)) if req.method == "ping" => {
                 Output::Send(OutgoingMessage::empty_response(req.id))
             }
-            // Waiting for completion, only legal thing (besides ping) is responding with
-            // `initialized`.
+            // Waiting for completion, only legal thing (besides ping) is receiving the
+            // `initialized` notification.
             (Phase::WaitingForInitialized(_), JsonrpcMessage::Notification(notif))
                 if notif.method == "notifications/initialized" =>
             {
