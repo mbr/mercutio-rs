@@ -24,7 +24,7 @@
 
 mod session_id;
 
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Router,
@@ -40,37 +40,11 @@ use tokio::sync::{Mutex, RwLock};
 pub use self::session_id::{
     McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
 };
-use crate::{McpServer, McpServerBuilder, Output, ToolOutput, ToolRegistry, parse_line};
+pub use super::ToolHandler;
+use crate::{McpServer, McpServerBuilder, Output, ToolRegistry, parse_line};
 
 /// Type alias for the session storage map.
 type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;
-
-/// Handles tool invocations for an MCP server.
-///
-/// Takes `&self` (not `&mut self`) for concurrent request handling. Use interior mutability
-/// for mutable state.
-pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
-    /// Error type returned by the handler.
-    type Error: std::fmt::Display;
-
-    /// Handles a tool invocation and returns the result.
-    fn handle(&self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
-}
-
-impl<R, F, Fut, T, E> ToolHandler<R> for F
-where
-    R: ToolRegistry + Send,
-    F: Fn(R) -> Fut + Send + Sync,
-    Fut: Future<Output = Result<T, E>> + Send,
-    T: Into<ToolOutput>,
-    E: std::fmt::Display,
-{
-    type Error = E;
-
-    async fn handle(&self, tool: R) -> Result<ToolOutput, E> {
-        self(tool).await.map(Into::into)
-    }
-}
 
 /// Shared state for axum handlers.
 struct AppState<R: ToolRegistry, H: ToolHandler<R>> {

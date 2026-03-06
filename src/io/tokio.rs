@@ -3,38 +3,10 @@
 //! Runs an MCP server using newline-delimited JSON over stdin/stdout. This is the standard
 //! transport for local MCP servers spawned as child processes.
 
-use std::future::Future;
-
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
-pub use super::IoError;
-use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
-
-/// Handles tool invocations for an MCP server.
-///
-/// A blanket implementation covers closures returning `Result<T, E>` where `T: Into<ToolOutput>`.
-/// For async handlers with mutable state, implement this trait on a struct.
-pub trait ToolHandler<R: ToolRegistry> {
-    /// Error type returned by the handler.
-    type Error: std::fmt::Display;
-
-    /// Handles a tool invocation and returns the result.
-    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>>;
-}
-
-impl<R, F, T, E> ToolHandler<R> for F
-where
-    R: ToolRegistry,
-    F: FnMut(R) -> Result<T, E>,
-    T: Into<ToolOutput>,
-    E: std::fmt::Display,
-{
-    type Error = E;
-
-    async fn handle(&mut self, tool: R) -> Result<ToolOutput, E> {
-        self(tool).map(Into::into)
-    }
-}
+pub use super::{IoError, MutToolHandler, ToolHandler};
+use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout asynchronously.
 ///
@@ -59,7 +31,7 @@ where
 ///
 /// ```no_run
 /// use std::convert::Infallible;
-/// use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, ToolHandler}};
+/// use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, MutToolHandler}};
 ///
 /// mercutio::tool_registry! {
 ///     enum MyTools {
@@ -71,7 +43,7 @@ where
 ///     request_count: u32,
 /// }
 ///
-/// impl ToolHandler<MyTools> for Handler {
+/// impl MutToolHandler<MyTools> for Handler {
 ///     type Error = Infallible;
 ///
 ///     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
@@ -97,7 +69,7 @@ where
 pub async fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: ToolHandler<R>,
+    H: MutToolHandler<R>,
 {
     let stdin = BufReader::new(tokio::io::stdin());
     let stdout = tokio::io::stdout();
@@ -116,7 +88,7 @@ pub async fn run_on<R, H, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: ToolHandler<R>,
+    H: MutToolHandler<R>,
     I: AsyncBufReadExt + Unpin,
     O: AsyncWriteExt + Unpin,
 {
@@ -183,7 +155,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 
@@ -210,7 +182,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 
@@ -227,7 +199,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 

@@ -3,9 +3,57 @@
 //! These modules provide ready-made transport implementations for common use cases. Each transport
 //! is behind its own feature flag.
 
+use std::future::Future;
+
 use thiserror::Error;
 
-use crate::{ParseError, ProtocolError};
+use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
+
+/// Handles tool invocations in concurrent contexts.
+///
+/// Blanket impl for `Fn(R) -> impl Future<Output = Result<T, E>>`.
+pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
+    /// Error type returned by the handler.
+    type Error: std::fmt::Display;
+
+    /// Handles a tool invocation and returns the result.
+    fn handle(&self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
+}
+
+impl<R, F, Fut, T, E> ToolHandler<R> for F
+where
+    R: ToolRegistry + Send,
+    F: Fn(R) -> Fut + Send + Sync,
+    Fut: Future<Output = Result<T, E>> + Send,
+    T: Into<ToolOutput>,
+    E: std::fmt::Display,
+{
+    type Error = E;
+
+    async fn handle(&self, tool: R) -> Result<ToolOutput, E> {
+        self(tool).await.map(Into::into)
+    }
+}
+
+/// Handles tool invocations in exclusive-access contexts.
+///
+/// Every [`ToolHandler`] is automatically a `MutToolHandler` via blanket impl.
+pub trait MutToolHandler<R: ToolRegistry> {
+    /// Error type returned by the handler.
+    type Error: std::fmt::Display;
+
+    /// Handles a tool invocation and returns the result.
+    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
+}
+
+/// Every [`ToolHandler`] is automatically a [`MutToolHandler`].
+impl<R: ToolRegistry, T: ToolHandler<R>> MutToolHandler<R> for T {
+    type Error = <T as ToolHandler<R>>::Error;
+
+    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send {
+        ToolHandler::handle(self, tool)
+    }
+}
 
 #[cfg(feature = "io-stdlib")]
 #[cfg_attr(docsrs, doc(cfg(feature = "io-stdlib")))]
