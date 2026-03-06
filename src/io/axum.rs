@@ -2,7 +2,8 @@
 //!
 //! Implements the
 //! [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
-//! from MCP specification 2025-03-26. Provides session management and an axum router for handling MCP requests over HTTP.
+//! from MCP specification 2025-03-26. Provides session management and an axum router for handling
+//! MCP requests over HTTP.
 //!
 //! # Overview
 //!
@@ -12,15 +13,16 @@
 //! - `GET`: Returns 405 Method Not Allowed (SSE streaming not implemented)
 //! - `DELETE`: Session termination
 //!
-//! Sessions are identified by the `Mcp-Session-Id` header. The server generates a session ID
-//! when responding to an `initialize` request and the client must include it in subsequent
-//! requests.
+//! Sessions are identified by the `Mcp-Session-Id` header. The server generates a session ID when
+//! responding to an `initialize` request and the client must include it in subsequent requests.
 //!
 //! # Limitations
 //!
 //! This implementation does not support SSE streaming for server-initiated messages. The GET
-//! endpoint returns 405 Method Not Allowed per the spec. Batch requests (JSON-RPC arrays) are
-//! also not yet supported.
+//! endpoint returns 405 Method Not Allowed per the spec. Batch requests (JSON-RPC arrays) are also
+//! not yet supported.
+
+mod session_id;
 
 use std::{collections::HashMap, future::Future, sync::Arc};
 
@@ -28,16 +30,17 @@ use axum::{
     Router,
     body::Bytes,
     extract::State,
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderValue, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
+use rand::Rng;
 use tokio::sync::RwLock;
 
+pub use self::session_id::{
+    McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
+};
 use crate::{McpServer, McpServerBuilder, Output, ToolOutput, ToolRegistry, parse_line};
-
-/// Session ID header name per MCP spec.
-pub const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Handles tool invocations for an MCP server.
 ///
@@ -72,7 +75,7 @@ where
 /// on `initialize` requests and removed on `DELETE` or timeout.
 pub struct Sessions<R: ToolRegistry> {
     /// Map of session ID to server instance.
-    servers: RwLock<HashMap<String, tokio::sync::Mutex<McpServer<R>>>>,
+    servers: RwLock<HashMap<McpSessionId, tokio::sync::Mutex<McpServer<R>>>>,
     /// Builder for creating new server instances.
     builder: McpServerBuilder<R>,
 }
@@ -88,14 +91,8 @@ impl<R: ToolRegistry> Sessions<R> {
         }
     }
 
-    /// Generates a random session ID using the provided RNG.
-    pub fn generate_id<Rng: rand::Rng>(rng: &mut Rng) -> String {
-        let id: u128 = rng.random();
-        format!("{:032x}", id)
-    }
-
     /// Inserts a new session with the given ID.
-    async fn insert_session(&self, id: String) {
+    async fn insert(&self, id: McpSessionId) {
         let server = self.builder.build();
         self.servers
             .write()
@@ -104,8 +101,8 @@ impl<R: ToolRegistry> Sessions<R> {
     }
 
     /// Removes a session by ID. Returns true if the session existed.
-    pub async fn remove(&self, id: &str) -> bool {
-        self.servers.write().await.remove(id).is_some()
+    pub async fn remove(&self, id: McpSessionId) -> bool {
+        self.servers.write().await.remove(&id).is_some()
     }
 
     /// Returns the number of active sessions.
@@ -194,18 +191,13 @@ where
 /// Handles POST requests (client messages).
 async fn handle_post<R, H>(
     State(state): State<AppState<R, H>>,
-    headers: HeaderMap,
+    OptionalSessionId(session_id): OptionalSessionId,
     body: Bytes,
 ) -> Response
 where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let session_id = headers
-        .get(SESSION_ID_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .map(String::from);
-
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s,
         Err(_) => return (StatusCode::BAD_REQUEST, "invalid UTF-8").into_response(),
@@ -219,7 +211,7 @@ where
     };
 
     match session_id {
-        Some(id) => handle_existing_session(&state, &id, msg).await,
+        Some(id) => handle_existing_session(&state, id, msg).await,
         None => handle_new_session(&state, msg).await,
     }
 }
@@ -234,7 +226,7 @@ async fn handle_get() -> Response {
 /// Handles a message for an existing session.
 async fn handle_existing_session<R, H>(
     state: &AppState<R, H>,
-    session_id: &str,
+    session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
 ) -> Response
 where
@@ -242,7 +234,7 @@ where
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let servers = state.sessions.servers.read().await;
-    let server_mutex = match servers.get(session_id) {
+    let server_mutex = match servers.get(&session_id) {
         Some(s) => s,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -264,8 +256,8 @@ where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let session_id = Sessions::<R>::generate_id(&mut rand::rng());
-    state.sessions.insert_session(session_id.clone()).await;
+    let session_id: McpSessionId = rand::rng().random();
+    state.sessions.insert(session_id).await;
 
     let servers = state.sessions.servers.read().await;
     let server_mutex = servers.get(&session_id).expect("just created");
@@ -275,14 +267,14 @@ where
     drop(servers);
 
     if let Output::ProtocolError(_) = &output {
-        state.sessions.remove(&session_id).await;
+        state.sessions.remove(session_id).await;
     }
 
-    output_to_response(output, &state.handler, Some(&session_id)).await
+    output_to_response(output, &state.handler, Some(session_id)).await
 }
 
 /// Builds a JSON response with optional session ID header.
-fn json_response(msg: &crate::OutgoingMessage, session_id: Option<&str>) -> Response {
+fn json_response(msg: &crate::OutgoingMessage, session_id: Option<McpSessionId>) -> Response {
     let json = match serde_json::to_vec(msg.as_inner()) {
         Ok(j) => j,
         Err(e) => {
@@ -301,9 +293,8 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: Option<&str>) -> Resp
     )
         .into_response();
 
-    if let Some(id) = session_id
-        && let Ok(value) = HeaderValue::from_str(id)
-    {
+    if let Some(id) = session_id {
+        let value = HeaderValue::from_str(&id.to_string()).expect("hex is valid header");
         response.headers_mut().insert(SESSION_ID_HEADER, value);
     }
 
@@ -314,7 +305,7 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: Option<&str>) -> Resp
 async fn output_to_response<R, H>(
     output: Output<R>,
     handler: &H,
-    session_id: Option<&str>,
+    session_id: Option<McpSessionId>,
 ) -> Response
 where
     R: ToolRegistry,
@@ -335,16 +326,14 @@ where
 }
 
 /// Handles DELETE requests (session termination).
-async fn handle_delete<R, H>(State(state): State<AppState<R, H>>, headers: HeaderMap) -> Response
+async fn handle_delete<R, H>(
+    State(state): State<AppState<R, H>>,
+    session_id: McpSessionId,
+) -> Response
 where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let session_id = match headers.get(SESSION_ID_HEADER).and_then(|v| v.to_str().ok()) {
-        Some(id) => id,
-        None => return (StatusCode::BAD_REQUEST, "missing session ID").into_response(),
-    };
-
     if state.sessions.remove(session_id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
@@ -479,7 +468,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("content-type", "application/json")
-                    .header(SESSION_ID_HEADER, "nonexistent-session")
+                    .header(SESSION_ID_HEADER, "00000000000000000000000000000000")
                     .body(Body::from(body))
                     .unwrap(),
             )
