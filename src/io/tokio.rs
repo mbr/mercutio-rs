@@ -51,11 +51,26 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use mercutio::{McpServer, io::tokio::run_stdio};
+/// use mercutio::{McpServer, OutgoingMessage, io::tokio::{run_stdio, ToolHandler}};
 ///
 /// mercutio::tool_registry! {
 ///     enum MyTools {
 ///         GetWeather("get_weather", "Gets weather") { city: String },
+///     }
+/// }
+///
+/// struct Handler {
+///     request_count: u32,
+/// }
+///
+/// impl ToolHandler<MyTools> for Handler {
+///     async fn handle(&mut self, tool: MyTools) -> OutgoingMessage {
+///         self.request_count += 1;
+///         match tool {
+///             MyTools::GetWeather(input, responder) => {
+///                 responder.success(format!("Weather in {}: sunny", input.city))
+///             }
+///         }
 ///     }
 /// }
 ///
@@ -66,20 +81,13 @@ where
 ///         .version("1.0.0")
 ///         .build();
 ///
-///     run_stdio(server, |tool| async move {
-///         match tool {
-///             MyTools::GetWeather(input, responder) => {
-///                 responder.success(format!("Weather in {}: sunny", input.city))
-///             }
-///         }
-///     }).await
+///     run_stdio(server, Handler { request_count: 0 }).await
 /// }
 /// ```
-pub async fn run_stdio<R, H, Fut>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub async fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> Fut,
-    Fut: Future<Output = OutgoingMessage>,
+    H: ToolHandler<R>,
 {
     let stdin = BufReader::new(tokio::io::stdin());
     let stdout = tokio::io::stdout();
@@ -87,7 +95,7 @@ where
 }
 
 /// Runs an MCP server on arbitrary async buffered input/output streams.
-async fn run_on<R, H, Fut, I, O>(
+async fn run_on<R, H, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
@@ -95,8 +103,7 @@ async fn run_on<R, H, Fut, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> Fut,
-    Fut: Future<Output = OutgoingMessage>,
+    H: ToolHandler<R>,
     I: AsyncBufReadExt + Unpin,
     O: AsyncWriteExt + Unpin,
 {
@@ -116,7 +123,7 @@ where
                 write_message(&mut output, response).await?;
             }
             Output::ToolCall(tool) => {
-                let response = handler(tool).await;
+                let response = handler.handle(tool).await;
                 write_message(&mut output, response).await?;
             }
             Output::ProtocolError(e) => {
@@ -163,7 +170,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { unreachable!("no tools") },
+            |_: NoTools| unreachable!("no tools"),
         )
         .await;
 
@@ -190,7 +197,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { unreachable!("no tools") },
+            |_: NoTools| unreachable!("no tools"),
         )
         .await;
 
@@ -207,7 +214,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { unreachable!("no tools") },
+            |_: NoTools| unreachable!("no tools"),
         )
         .await;
 
