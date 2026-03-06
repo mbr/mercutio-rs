@@ -67,7 +67,7 @@ impl FromStr for McpSessionId {
 #[derive(Debug, Error)]
 pub enum SessionIdRejection {
     /// The `Mcp-Session-Id` header is missing.
-    #[error("missing session ID header")]
+    #[error("missing session ID header `{SESSION_ID_HEADER}`")]
     Missing,
     /// The header value is not valid UTF-8.
     #[error("session ID header not valid UTF-8")]
