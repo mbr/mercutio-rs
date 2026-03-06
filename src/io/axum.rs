@@ -184,11 +184,21 @@ where
         state.sessions.write().await.remove(&session_id);
     }
 
-    output_to_response(output, &state.handler, Some(session_id)).await
+    match output {
+        Output::Send(msg) => json_response(&msg, session_id),
+        Output::ToolCall { tool, responder } => {
+            let result = state.handler.handle(tool).await;
+            json_response(&responder.respond(result), session_id)
+        }
+        Output::None => StatusCode::ACCEPTED.into_response(),
+        Output::ProtocolError(e) => {
+            (StatusCode::BAD_REQUEST, format!("protocol error: {e}")).into_response()
+        }
+    }
 }
 
-/// Builds a JSON response with optional session ID header.
-fn json_response(msg: &crate::OutgoingMessage, session_id: Option<McpSessionId>) -> Response {
+/// Builds a JSON response with session ID header.
+fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Response {
     let json = match serde_json::to_vec(msg.as_inner()) {
         Ok(j) => j,
         Err(e) => {
@@ -207,36 +217,10 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: Option<McpSessionId>)
     )
         .into_response();
 
-    if let Some(id) = session_id {
-        let value = HeaderValue::from_str(&id.to_string()).expect("hex is valid header");
-        response.headers_mut().insert(SESSION_ID_HEADER, value);
-    }
+    let value = HeaderValue::from_str(&session_id.to_string()).expect("hex is valid header");
+    response.headers_mut().insert(SESSION_ID_HEADER, value);
 
     response
-}
-
-/// Converts server output to an HTTP response.
-async fn output_to_response<R, H>(
-    output: Output<R>,
-    handler: &H,
-    session_id: Option<McpSessionId>,
-) -> Response
-where
-    R: ToolRegistry,
-    H: ToolHandler<R>,
-{
-    match output {
-        Output::Send(msg) => json_response(&msg, session_id),
-        Output::ToolCall { tool, responder } => {
-            let result = handler.handle(tool).await;
-            let msg = responder.respond(result);
-            json_response(&msg, session_id)
-        }
-        Output::None => StatusCode::ACCEPTED.into_response(),
-        Output::ProtocolError(e) => {
-            (StatusCode::BAD_REQUEST, format!("protocol error: {e}")).into_response()
-        }
-    }
 }
 
 /// Handles DELETE requests (session termination).
