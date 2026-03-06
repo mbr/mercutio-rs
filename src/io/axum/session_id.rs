@@ -113,13 +113,12 @@ where
 {
     type Rejection = SessionIdRejection;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let Some(value) = parts.headers.get(SESSION_ID_HEADER) else {
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        if !parts.headers.contains_key(SESSION_ID_HEADER) {
             return Ok(Self(None));
-        };
+        }
 
-        let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
-        let id = s.parse().map_err(SessionIdRejection::InvalidFormat)?;
+        let id = McpSessionId::from_request_parts(parts, state).await?;
         Ok(Self(Some(id)))
     }
 }
