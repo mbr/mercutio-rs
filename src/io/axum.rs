@@ -45,8 +45,9 @@
 //!
 //! # Limitations
 //!
-//! This implementation does not support SSE streaming for server-initiated messages. Batch
-//! requests (JSON-RPC arrays) are also not yet supported.
+//! - No SSE streaming for server-initiated messages
+//! - No batch requests (JSON-RPC arrays)
+//! - No session persistence across server restarts
 
 mod session_id;
 
@@ -96,6 +97,8 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 ///
 /// Returns a router handling `POST /` for client messages and `DELETE /` for session termination.
 /// See the [module documentation](self) for a complete example.
+///
+/// Session storage is managed internally and not exposed. Sessions are lost on server restart.
 pub fn mcp_router<R, H>(builder: McpServerBuilder<R>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
