@@ -10,7 +10,7 @@ documentation = "https://docs.rs/mercutio"
 [features]
 io-stdlib = []
 io-tokio = ["dep:tokio"]
-io-axum = ["dep:axum", "dep:tokio", "dep:uuid"]
+io-axum = ["dep:axum", "dep:tokio", "dep:rand"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -25,7 +25,7 @@ thiserror = "2.0"
 tokio = { version = "1", features = ["io-std", "io-util", "sync"], optional = true }
 tracing = "0.1"
 axum = { version = "0.8", optional = true }
-uuid = { version = "1", features = ["v4"], optional = true }
+rand = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }

@@ -88,15 +88,19 @@ impl<R: ToolRegistry> Sessions<R> {
         }
     }
 
-    /// Creates a new session and returns its ID.
-    async fn create_session(&self) -> String {
-        let id = uuid::Uuid::new_v4().to_string();
+    /// Generates a random session ID using the provided RNG.
+    pub fn generate_id<Rng: rand::Rng>(rng: &mut Rng) -> String {
+        let id: u128 = rng.random();
+        format!("{:032x}", id)
+    }
+
+    /// Inserts a new session with the given ID.
+    async fn insert_session(&self, id: String) {
         let server = self.builder.build();
         self.servers
             .write()
             .await
-            .insert(id.clone(), tokio::sync::Mutex::new(server));
-        id
+            .insert(id, tokio::sync::Mutex::new(server));
     }
 
     /// Removes a session by ID. Returns true if the session existed.
@@ -260,7 +264,8 @@ where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let session_id = state.sessions.create_session().await;
+    let session_id = Sessions::<R>::generate_id(&mut rand::rng());
+    state.sessions.insert_session(session_id.clone()).await;
 
     let servers = state.sessions.servers.read().await;
     let server_mutex = servers.get(&session_id).expect("just created");
