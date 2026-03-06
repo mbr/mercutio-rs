@@ -41,9 +41,8 @@ pub const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Handles tool invocations for an MCP server.
 ///
-/// Similar to the tokio transport's `ToolHandler`, but takes `&self` instead of `&mut self`
-/// because axum handlers must be `Clone + Send + Sync` for concurrent request handling. Use
-/// interior mutability (e.g., `Arc<Mutex<...>>`) for mutable state.
+/// Takes `&self` (not `&mut self`) for concurrent request handling. Use interior mutability
+/// for mutable state.
 pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
     /// Error type returned by the handler.
     type Error: std::fmt::Display;
