@@ -10,11 +10,29 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 pub use super::IoError;
 use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
+/// Handles tool invocations for an MCP server.
+///
+/// A blanket implementation covers `FnMut(R) -> OutgoingMessage` for simple handlers. For async
+/// handlers with mutable state, implement this trait on a struct.
+pub trait ToolHandler<R: ToolRegistry> {
+    /// Handles a tool invocation and returns the response.
+    fn handle(&mut self, tool: R) -> impl Future<Output = OutgoingMessage>;
+}
+
+impl<R, F> ToolHandler<R> for F
+where
+    R: ToolRegistry,
+    F: FnMut(R) -> OutgoingMessage,
+{
+    async fn handle(&mut self, tool: R) -> OutgoingMessage {
+        self(tool)
+    }
+}
+
 /// Runs an MCP server over stdin/stdout asynchronously.
 ///
 /// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must return a future that resolves to an
-/// [`OutgoingMessage`].
+/// handler is called for each tool invocation and must produce an [`OutgoingMessage`].
 ///
 /// Returns when stdin reaches EOF or a protocol error occurs.
 ///
