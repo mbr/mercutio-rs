@@ -23,9 +23,8 @@
 //! not yet supported.
 
 mod session_id;
-mod sessions;
 
-use std::{future::Future, sync::Arc};
+use std::{collections::HashMap, future::Future, sync::Arc};
 
 use axum::{
     Router,
@@ -36,14 +35,15 @@ use axum::{
     routing::{delete, get, post},
 };
 use rand::Rng;
+use tokio::sync::{Mutex, RwLock};
 
-pub use self::{
-    session_id::{
-        McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
-    },
-    sessions::Sessions,
+pub use self::session_id::{
+    McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
 };
-use crate::{Output, ToolOutput, ToolRegistry, parse_line};
+use crate::{McpServer, McpServerBuilder, Output, ToolOutput, ToolRegistry, parse_line};
+
+/// Type alias for the session storage map.
+type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;
 
 /// Handles tool invocations for an MCP server.
 ///
@@ -74,8 +74,10 @@ where
 
 /// Shared state for axum handlers.
 struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
+    /// Builder for creating new server instances.
+    builder: McpServerBuilder<R>,
     /// Session storage holding one [`McpServer`] per active session.
-    sessions: Arc<Sessions<R>>,
+    sessions: SessionMap<R>,
     /// Handler for tool invocations, called when `Output::ToolCall` is returned.
     handler: H,
 }
@@ -83,6 +85,7 @@ struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
 impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
     fn clone(&self) -> Self {
         Self {
+            builder: self.builder.clone(),
             sessions: Arc::clone(&self.sessions),
             handler: self.handler.clone(),
         }
@@ -97,14 +100,14 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 ///
 /// # Arguments
 ///
-/// * `sessions` - Session storage created with [`Sessions::new`]
+/// * `builder` - Server builder for creating new session instances
 /// * `handler` - Tool handler implementing [`ToolHandler`]
 ///
 /// # Example
 ///
 /// ```ignore
 /// use std::convert::Infallible;
-/// use mercutio::{McpServer, io::axum::{Sessions, mcp_router}};
+/// use mercutio::{McpServer, io::axum::mcp_router};
 ///
 /// mercutio::tool_registry! {
 ///     enum MyTools {
@@ -114,9 +117,8 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 ///
 /// let mut builder = McpServer::<MyTools>::builder();
 /// builder.name("my-server").version("1.0.0");
-/// let sessions = Sessions::new(builder);
 ///
-/// let router = mcp_router(sessions, |tool: MyTools| async move {
+/// let router = mcp_router(builder, |tool: MyTools| async move {
 ///     match tool {
 ///         MyTools::GetWeather(input) => {
 ///             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
@@ -127,13 +129,14 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 /// // Mount at your desired path
 /// let app = axum::Router::new().nest("/mcp", router);
 /// ```
-pub fn mcp_router<R, H>(sessions: Sessions<R>, handler: H) -> Router
+pub fn mcp_router<R, H>(builder: McpServerBuilder<R>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let state = AppState {
-        sessions: Arc::new(sessions),
+        builder,
+        sessions: Arc::new(RwLock::new(HashMap::new())),
         handler,
     };
 
@@ -189,8 +192,8 @@ where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let servers = state.sessions.servers.read().await;
-    let server_mutex = match servers.get(&session_id) {
+    let sessions = state.sessions.read().await;
+    let server_mutex = match sessions.get(&session_id) {
         Some(s) => s,
         None => return StatusCode::NOT_FOUND.into_response(),
     };
@@ -198,7 +201,7 @@ where
     let mut server = server_mutex.lock().await;
     let output = server.handle(msg);
     drop(server);
-    drop(servers);
+    drop(sessions);
 
     output_to_response(output, &state.handler, Some(session_id)).await
 }
@@ -213,17 +216,22 @@ where
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let session_id: McpSessionId = rand::rng().random();
-    state.sessions.insert(session_id).await;
+    let server = state.builder.build();
 
-    let servers = state.sessions.servers.read().await;
-    let server_mutex = servers.get(&session_id).expect("just created");
+    {
+        let mut sessions = state.sessions.write().await;
+        sessions.insert(session_id, Mutex::new(server));
+    }
+
+    let sessions = state.sessions.read().await;
+    let server_mutex = sessions.get(&session_id).expect("just created");
     let mut server = server_mutex.lock().await;
     let output = server.handle(msg);
     drop(server);
-    drop(servers);
+    drop(sessions);
 
     if let Output::ProtocolError(_) = &output {
-        state.sessions.remove(session_id).await;
+        state.sessions.write().await.remove(&session_id);
     }
 
     output_to_response(output, &state.handler, Some(session_id)).await
@@ -290,7 +298,7 @@ where
     R: ToolRegistry + Send + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    if state.sessions.remove(session_id).await {
+    if state.sessions.write().await.remove(&session_id).is_some() {
         StatusCode::NO_CONTENT.into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
@@ -305,13 +313,13 @@ mod tests {
     };
     use tower::util::ServiceExt;
 
-    use super::{SESSION_ID_HEADER, Sessions, mcp_router};
-    use crate::{McpServer, NoTools};
+    use super::{SESSION_ID_HEADER, mcp_router};
+    use crate::{McpServer, McpServerBuilder, NoTools};
 
-    fn test_sessions() -> Sessions<NoTools> {
+    fn test_builder() -> McpServerBuilder<NoTools> {
         let mut builder = McpServer::builder();
         builder.name("test").version("1.0");
-        Sessions::new(builder)
+        builder
     }
 
     fn test_handler(_: NoTools) -> Result<String, std::convert::Infallible> {
@@ -320,7 +328,7 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_creates_session() {
-        let router = mcp_router(test_sessions(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
 
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -350,8 +358,7 @@ mod tests {
 
     #[tokio::test]
     async fn subsequent_request_requires_session() {
-        let sessions = test_sessions();
-        let router = mcp_router(sessions, |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
 
         let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -414,7 +421,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_session_returns_404() {
-        let router = mcp_router(test_sessions(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
 
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
 
@@ -436,10 +443,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_removes_session() {
-        let mut builder = McpServer::builder();
-        builder.name("test").version("1.0");
-        let sessions = Sessions::new(builder);
-        let router = mcp_router(sessions, |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
 
         let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -499,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_returns_405() {
-        let router = mcp_router(test_sessions(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
 
         let response = router
             .oneshot(
