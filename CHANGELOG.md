@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `io-axum` feature: HTTP transport implementing MCP Streamable HTTP with session management.
+- `ToolHandler` trait for concurrent contexts (`&self`), with blanket impl for async closures.
+- `MutToolHandler` trait for exclusive-access contexts (`&mut self`), with blanket impl from `ToolHandler`.
+
+### Changed
+
+- `io` module is now always available; only submodules (`io::tokio`, `io::axum`, `io::stdlib`) are feature-gated.
+- `io::tokio` now uses `MutToolHandler` instead of `ToolHandler`.
+
 ## [0.2.0] - 2026-03-06
 
 ### Added
