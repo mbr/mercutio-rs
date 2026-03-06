@@ -2,6 +2,34 @@
 //!
 //! Runs an MCP server using newline-delimited JSON over stdin/stdout. This is the standard
 //! transport for local MCP servers spawned as child processes.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::convert::Infallible;
+//! use mercutio::{McpServer, io::stdlib::run_stdio};
+//!
+//! mercutio::tool_registry! {
+//!     enum MyTools {
+//!         GetWeather("get_weather", "Gets weather") { city: String },
+//!     }
+//! }
+//!
+//! fn main() -> Result<(), mercutio::io::stdlib::IoError> {
+//!     let server = McpServer::<MyTools>::builder()
+//!         .name("my-server")
+//!         .version("1.0.0")
+//!         .build();
+//!
+//!     run_stdio(server, |tool| -> Result<String, Infallible> {
+//!         match tool {
+//!             MyTools::GetWeather(input) => {
+//!                 Ok(format!("Weather in {}: sunny", input.city))
+//!             }
+//!         }
+//!     })
+//! }
+//! ```
 
 use std::io::{BufRead, BufReader, Write};
 
@@ -10,44 +38,14 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout.
 ///
-/// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must return `Result<T, E>` where
-/// `T: Into<ToolOutput>` (e.g., `String`, [`ToolOutput`](crate::ToolOutput)).
-///
-/// Returns when stdin reaches EOF or a protocol error occurs.
+/// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. Returns
+/// when stdin reaches EOF or a protocol error occurs. See the [module documentation](self) for a
+/// complete example.
 ///
 /// # Deadlock Warning
 ///
-/// Stdout is locked for the duration of this call. Using [`println!`], [`print!`], or other
-/// stdout-locking macros inside the handler will deadlock. Use [`eprintln!`] for debug output.
-///
-/// # Example
-///
-/// ```no_run
-/// use std::convert::Infallible;
-/// use mercutio::{McpServer, io::stdlib::run_stdio};
-///
-/// mercutio::tool_registry! {
-///     enum MyTools {
-///         GetWeather("get_weather", "Gets weather") { city: String },
-///     }
-/// }
-///
-/// fn main() -> Result<(), mercutio::io::stdlib::IoError> {
-///     let server = McpServer::<MyTools>::builder()
-///         .name("my-server")
-///         .version("1.0.0")
-///         .build();
-///
-///     run_stdio(server, |tool| -> Result<String, Infallible> {
-///         match tool {
-///             MyTools::GetWeather(input) => {
-///                 Ok(format!("Weather in {}: sunny", input.city))
-///             }
-///         }
-///     })
-/// }
-/// ```
+/// Stdout is locked for the duration of this call. Using [`println!`] or other stdout-locking
+/// macros inside the handler will deadlock.
 pub fn run_stdio<R, H, T, E>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,

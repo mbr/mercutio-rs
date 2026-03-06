@@ -2,6 +2,46 @@
 //!
 //! Runs an MCP server using newline-delimited JSON over stdin/stdout. This is the standard
 //! transport for local MCP servers spawned as child processes.
+//!
+//! # Example
+//!
+//! ```no_run
+//! use std::convert::Infallible;
+//! use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, MutToolHandler}};
+//!
+//! mercutio::tool_registry! {
+//!     enum MyTools {
+//!         GetWeather("get_weather", "Gets weather") { city: String },
+//!     }
+//! }
+//!
+//! struct Handler {
+//!     request_count: u32,
+//! }
+//!
+//! impl MutToolHandler<MyTools> for Handler {
+//!     type Error = Infallible;
+//!
+//!     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
+//!         self.request_count += 1;
+//!         match tool {
+//!             MyTools::GetWeather(input) => {
+//!                 Ok(format!("Weather in {}: sunny", input.city).into())
+//!             }
+//!         }
+//!     }
+//! }
+//!
+//! #[tokio::main]
+//! async fn main() -> Result<(), mercutio::io::tokio::IoError> {
+//!     let server = McpServer::<MyTools>::builder()
+//!         .name("my-server")
+//!         .version("1.0.0")
+//!         .build();
+//!
+//!     run_stdio(server, Handler { request_count: 0 }).await
+//! }
+//! ```
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
@@ -10,62 +50,19 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout asynchronously.
 ///
-/// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must produce an [`OutgoingMessage`].
-///
-/// Returns when stdin reaches EOF or a protocol error occurs.
+/// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. Returns
+/// when stdin reaches EOF or a protocol error occurs. See the [module documentation](self) for a
+/// complete example.
 ///
 /// # Warning
 ///
-/// Do not use [`println!`], [`print!`], or other stdout-writing macros inside the handler. While
-/// this won't deadlock (unlike the sync version), it will corrupt the JSON-RPC protocol stream.
-/// Use [`eprintln!`] for debug output.
+/// Do not use [`println!`] or other stdout-writing macros inside the handler - this will corrupt
+/// the JSON-RPC protocol stream.
 ///
 /// # Cancellation Safety
 ///
-/// This function is partially cancellation-safe. If cancelled mid-write, the client may receive a
-/// truncated response. Each message is serialized to a buffer and written with a single
-/// `write_all` call before flushing, which minimizes the window for partial writes.
-///
-/// # Example
-///
-/// ```no_run
-/// use std::convert::Infallible;
-/// use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, MutToolHandler}};
-///
-/// mercutio::tool_registry! {
-///     enum MyTools {
-///         GetWeather("get_weather", "Gets weather") { city: String },
-///     }
-/// }
-///
-/// struct Handler {
-///     request_count: u32,
-/// }
-///
-/// impl MutToolHandler<MyTools> for Handler {
-///     type Error = Infallible;
-///
-///     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
-///         self.request_count += 1;
-///         match tool {
-///             MyTools::GetWeather(input) => {
-///                 Ok(format!("Weather in {}: sunny", input.city).into())
-///             }
-///         }
-///     }
-/// }
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), mercutio::io::tokio::IoError> {
-///     let server = McpServer::<MyTools>::builder()
-///         .name("my-server")
-///         .version("1.0.0")
-///         .build();
-///
-///     run_stdio(server, Handler { request_count: 0 }).await
-/// }
-/// ```
+/// Partially cancellation-safe. If cancelled mid-write, the client may receive a truncated
+/// response.
 pub async fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,

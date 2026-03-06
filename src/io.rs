@@ -1,7 +1,16 @@
-//! Optional I/O transports.
+//! I/O transports for MCP servers.
 //!
-//! These modules provide ready-made transport implementations for common use cases. Each transport
-//! is behind its own feature flag.
+//! This module provides handler traits and ready-made transport implementations. The transports
+//! are feature-gated:
+//!
+//! - **`io-stdlib`**: Synchronous stdin/stdout via [`stdlib::run_stdio`]. Blocking, no async
+//!   runtime required.
+//! - **`io-tokio`**: Async stdin/stdout via [`tokio::run_stdio`]. Requires Tokio runtime.
+//! - **`io-axum`**: HTTP transport via [`axum::mcp_router`]. Implements MCP Streamable HTTP with
+//!   session management.
+//!
+//! The handler traits [`ToolHandler`] and [`MutToolHandler`] are always available for custom
+//! transport implementations.
 
 use std::future::Future;
 

@@ -5,22 +5,48 @@
 //! from MCP specification 2025-03-26. Provides session management and an axum router for handling
 //! MCP requests over HTTP.
 //!
-//! # Overview
+//! # Example
 //!
-//! The Streamable HTTP transport uses a single endpoint that accepts:
+//! ```no_run
+//! use std::convert::Infallible;
+//! use mercutio::{McpServer, io::axum::mcp_router};
 //!
-//! - `POST`: Client messages (requests, notifications, responses)
-//! - `GET`: Returns 405 Method Not Allowed (SSE streaming not implemented)
-//! - `DELETE`: Session termination
+//! mercutio::tool_registry! {
+//!     enum MyTools {
+//!         GetWeather("get_weather", "Gets weather") { city: String },
+//!     }
+//! }
+//!
+//! let mut builder = McpServer::<MyTools>::builder();
+//! builder.name("my-server").version("1.0.0");
+//!
+//! let router = mcp_router(builder, |tool: MyTools| async move {
+//!     match tool {
+//!         MyTools::GetWeather(input) => {
+//!             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
+//!         }
+//!     }
+//! });
+//!
+//! // Mount at your desired path
+//! let app = axum::Router::new().nest("/mcp", router);
+//! ```
+//!
+//! # Protocol
+//!
+//! The transport uses a single endpoint:
+//!
+//! - `POST /`: Client messages (requests, notifications, responses)
+//! - `GET /`: Returns 405 Method Not Allowed (SSE streaming not implemented)
+//! - `DELETE /`: Session termination
 //!
 //! Sessions are identified by the `Mcp-Session-Id` header. The server generates a session ID when
 //! responding to an `initialize` request and the client must include it in subsequent requests.
 //!
 //! # Limitations
 //!
-//! This implementation does not support SSE streaming for server-initiated messages. The GET
-//! endpoint returns 405 Method Not Allowed per the spec. Batch requests (JSON-RPC arrays) are also
-//! not yet supported.
+//! This implementation does not support SSE streaming for server-initiated messages. Batch
+//! requests (JSON-RPC arrays) are also not yet supported.
 
 mod session_id;
 
@@ -68,41 +94,8 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 
 /// Creates an axum [`Router`] for an MCP endpoint.
 ///
-/// The router handles:
-/// - `POST /`: Client messages (initialize, requests, notifications)
-/// - `DELETE /`: Session termination
-///
-/// # Arguments
-///
-/// * `builder` - Server builder for creating new session instances
-/// * `handler` - Tool handler implementing [`ToolHandler`]
-///
-/// # Example
-///
-/// ```ignore
-/// use std::convert::Infallible;
-/// use mercutio::{McpServer, io::axum::mcp_router};
-///
-/// mercutio::tool_registry! {
-///     enum MyTools {
-///         GetWeather("get_weather", "Gets weather") { city: String },
-///     }
-/// }
-///
-/// let mut builder = McpServer::<MyTools>::builder();
-/// builder.name("my-server").version("1.0.0");
-///
-/// let router = mcp_router(builder, |tool: MyTools| async move {
-///     match tool {
-///         MyTools::GetWeather(input) => {
-///             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
-///         }
-///     }
-/// });
-///
-/// // Mount at your desired path
-/// let app = axum::Router::new().nest("/mcp", router);
-/// ```
+/// Returns a router handling `POST /` for client messages and `DELETE /` for session termination.
+/// See the [module documentation](self) for a complete example.
 pub fn mcp_router<R, H>(builder: McpServerBuilder<R>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
