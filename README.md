@@ -52,7 +52,7 @@ loop {
 
 ## Feature Flags
 
-If you do not want/need to implement the IO harness yourself, `mercutio` has a few implementations ready:
+If you prefer not to implement the IO harness yourself, `mercutio` provides a few:
 
 - `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
 - `io-tokio` - Async stdin/stdout transport using Tokio
@@ -85,7 +85,7 @@ run_stdio(server, |tool| -> Result<String, Infallible> {
 
 ### io-tokio
 
-Async version using Tokio. Implement `ToolHandler` on a struct to use async operations:
+Async version using Tokio. Implement `ToolHandler` for a struct to use async operations:
 
 ```rust
 use std::convert::Infallible;
