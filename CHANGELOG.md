@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `Responder` simplified: `respond()` accepts bare values or `Result<T, E>`, `rpc_error()` for protocol errors.
 - Handlers return `impl IntoToolResponse` (e.g., `String`, `ToolOutput`, `Result<T, E>`).
 - `ToolRegistry::parse` no longer takes `id` parameter.
+- `ToolHandler` trait now uses `type Error` and returns `Result<ToolOutput, Self::Error>`.
+- `io::stdlib::run_stdio` now requires handlers to return `Result<T, E>`.
 - `io::tokio::run_stdio` now takes `impl ToolHandler<R>` instead of async closures.
 - Flattened module structure: removed `protocol` module, types now at crate root.
 

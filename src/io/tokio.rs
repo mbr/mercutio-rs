@@ -8,30 +8,31 @@ use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub use super::IoError;
-use crate::{IntoToolResponse, McpServer, OutgoingMessage, Output, ToolRegistry};
+use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 
 /// Handles tool invocations for an MCP server.
 ///
-/// A blanket implementation covers closures returning any [`IntoToolResponse`] type (including
-/// `Result<T, E>`). For async handlers with mutable state, implement this trait on a struct.
+/// A blanket implementation covers closures returning `Result<T, E>` where `T: Into<ToolOutput>`.
+/// For async handlers with mutable state, implement this trait on a struct.
 pub trait ToolHandler<R: ToolRegistry> {
-    /// Response type - anything that implements [`IntoToolResponse`].
-    type Response: IntoToolResponse;
+    /// Error type returned by the handler.
+    type Error: std::fmt::Display;
 
     /// Handles a tool invocation and returns the result.
-    fn handle(&mut self, tool: R) -> impl Future<Output = Self::Response>;
+    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>>;
 }
 
-impl<R, F, T> ToolHandler<R> for F
+impl<R, F, T, E> ToolHandler<R> for F
 where
     R: ToolRegistry,
-    F: FnMut(R) -> T,
-    T: IntoToolResponse,
+    F: FnMut(R) -> Result<T, E>,
+    T: Into<ToolOutput>,
+    E: std::fmt::Display,
 {
-    type Response = T;
+    type Error = E;
 
-    async fn handle(&mut self, tool: R) -> T {
-        self(tool)
+    async fn handle(&mut self, tool: R) -> Result<ToolOutput, E> {
+        self(tool).map(Into::into)
     }
 }
 
@@ -70,13 +71,13 @@ where
 /// }
 ///
 /// impl ToolHandler<MyTools> for Handler {
-///     type Response = Result<String, std::io::Error>;
+///     type Error = std::io::Error;
 ///
-///     async fn handle(&mut self, tool: MyTools) -> Self::Response {
+///     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
 ///         self.request_count += 1;
 ///         match tool {
 ///             MyTools::GetWeather(input) => {
-///                 Ok(format!("Weather in {}: sunny", input.city))
+///                 Ok(format!("Weather in {}: sunny", input.city).into())
 ///             }
 ///         }
 ///     }
@@ -178,7 +179,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> String { unreachable!("no tools") },
+            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
         )
         .await;
 
@@ -205,7 +206,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> String { unreachable!("no tools") },
+            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
         )
         .await;
 
@@ -222,7 +223,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> String { unreachable!("no tools") },
+            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
         )
         .await;
 

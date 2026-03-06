@@ -75,8 +75,10 @@ let server = McpServer::<MyTools>::builder()
     .version("1.0.0")
     .build();
 
-run_stdio(server, |tool| match tool {
-    MyTools::GetWeather(input) => Ok::<_, std::io::Error>(format!("Weather in {}: sunny", input.city)),
+run_stdio(server, |tool| -> Result<String, std::io::Error> {
+    match tool {
+        MyTools::GetWeather(input) => Ok(format!("Weather in {}: sunny", input.city)),
+    }
 })?;
 ```
 
@@ -85,7 +87,7 @@ run_stdio(server, |tool| match tool {
 Async version using Tokio. Implement `ToolHandler` on a struct to use async operations:
 
 ```rust
-use mercutio::{McpServer, io::tokio::{run_stdio, ToolHandler}};
+use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, ToolHandler}};
 
 mercutio::tool_registry! {
     enum MyTools {
@@ -96,13 +98,13 @@ mercutio::tool_registry! {
 struct Handler;
 
 impl ToolHandler<MyTools> for Handler {
-    type Response = Result<String, std::io::Error>;
+    type Error = std::io::Error;
 
-    async fn handle(&mut self, tool: MyTools) -> Self::Response {
+    async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
         match tool {
             MyTools::GetWeather(input) => {
                 let weather = fetch_weather(&input.city).await?;
-                Ok(format!("Weather in {}: {}", input.city, weather))
+                Ok(format!("Weather in {}: {}", input.city, weather).into())
             }
         }
     }
