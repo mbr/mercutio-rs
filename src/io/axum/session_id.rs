@@ -13,10 +13,8 @@ pub const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Unique identifier for an MCP session.
 ///
-/// Wraps a 128-bit random value, displayed as lowercase hex. Implements [`Distribution`] for
-/// generation via `rng.random()`, and [`FromRequestParts`] for extraction from the
-/// `Mcp-Session-Id` header.
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+/// Wraps a 128-bit random value, displayed as lowercase hex.
+#[derive(Clone, Copy, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct McpSessionId(u128);
 
 impl McpSessionId {
