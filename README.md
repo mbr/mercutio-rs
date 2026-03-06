@@ -62,6 +62,7 @@ If you do not want/need to implement the IO harness yourself, `mercutio` has a f
 Runs an MCP server over stdin/stdout with newline-delimited JSON:
 
 ```rust
+use std::convert::Infallible;
 use mercutio::{io::stdlib::run_stdio, McpServer};
 
 mercutio::tool_registry! {
@@ -75,7 +76,7 @@ let server = McpServer::<MyTools>::builder()
     .version("1.0.0")
     .build();
 
-run_stdio(server, |tool| -> Result<String, std::io::Error> {
+run_stdio(server, |tool| -> Result<String, Infallible> {
     match tool {
         MyTools::GetWeather(input) => Ok(format!("Weather in {}: sunny", input.city)),
     }
@@ -87,6 +88,7 @@ run_stdio(server, |tool| -> Result<String, std::io::Error> {
 Async version using Tokio. Implement `ToolHandler` on a struct to use async operations:
 
 ```rust
+use std::convert::Infallible;
 use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, ToolHandler}};
 
 mercutio::tool_registry! {
@@ -98,13 +100,12 @@ mercutio::tool_registry! {
 struct Handler;
 
 impl ToolHandler<MyTools> for Handler {
-    type Error = std::io::Error;
+    type Error = Infallible;
 
     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
         match tool {
             MyTools::GetWeather(input) => {
-                let weather = fetch_weather(&input.city).await?;
-                Ok(format!("Weather in {}: {}", input.city, weather).into())
+                Ok(format!("Weather in {}: sunny", input.city).into())
             }
         }
     }

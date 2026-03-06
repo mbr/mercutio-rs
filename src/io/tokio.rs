@@ -71,7 +71,7 @@ where
 /// }
 ///
 /// impl ToolHandler<MyTools> for Handler {
-///     type Error = std::io::Error;
+///     type Error = std::convert::Infallible;
 ///
 ///     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
 ///         self.request_count += 1;

@@ -38,7 +38,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 ///         .version("1.0.0")
 ///         .build();
 ///
-///     run_stdio(server, |tool| -> Result<String, std::io::Error> {
+///     run_stdio(server, |tool| -> Result<String, std::convert::Infallible> {
 ///         match tool {
 ///             MyTools::GetWeather(input) => {
 ///                 Ok(format!("Weather in {}: sunny", input.city))
