@@ -56,6 +56,7 @@ If you prefer not to implement the IO harness yourself, `mercutio` provides a fe
 
 - `io-stdlib` - Synchronous stdin/stdout transport using standard library I/O
 - `io-tokio` - Async stdin/stdout transport using Tokio
+- `io-axum` - HTTP transport using Axum (MCP Streamable HTTP)
 
 ### io-stdlib
 
@@ -85,11 +86,11 @@ run_stdio(server, |tool| -> Result<String, Infallible> {
 
 ### io-tokio
 
-Async version using Tokio. Implement `ToolHandler` for a struct to use async operations:
+Async version using Tokio. Implement `MutToolHandler` for stateful handlers:
 
 ```rust
 use std::convert::Infallible;
-use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, ToolHandler}};
+use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, MutToolHandler}};
 
 mercutio::tool_registry! {
     enum MyTools {
@@ -99,7 +100,7 @@ mercutio::tool_registry! {
 
 struct Handler;
 
-impl ToolHandler<MyTools> for Handler {
+impl MutToolHandler<MyTools> for Handler {
     type Error = Infallible;
 
     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
@@ -120,4 +121,32 @@ async fn main() -> Result<(), mercutio::io::tokio::IoError> {
 
     run_stdio(server, Handler).await
 }
+```
+
+### io-axum
+
+HTTP transport implementing MCP Streamable HTTP with session management:
+
+```rust
+use std::convert::Infallible;
+use mercutio::{McpServer, io::axum::mcp_router};
+
+mercutio::tool_registry! {
+    enum MyTools {
+        GetWeather("get_weather", "Gets weather") { city: String },
+    }
+}
+
+let mut builder = McpServer::<MyTools>::builder();
+builder.name("my-server").version("1.0.0");
+
+let router = mcp_router(builder, |tool: MyTools| async move {
+    match tool {
+        MyTools::GetWeather(input) => {
+            Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
+        }
+    }
+});
+
+let app = axum::Router::new().nest("/mcp", router);
 ```
