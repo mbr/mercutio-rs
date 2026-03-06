@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-03-06
+
 ### Added
 
 - `io-axum` feature: HTTP transport implementing MCP Streamable HTTP with session management.
@@ -46,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio/compare/0.2.0...HEAD
+[Unreleased]: https://github.com/mbr/mercutio/compare/0.3.0...HEAD
+[0.3.0]: https://github.com/mbr/mercutio/compare/0.2.0...0.3.0
 [0.2.0]: https://github.com/mbr/mercutio/compare/0.1.0...0.2.0
 [0.1.0]: https://github.com/mbr/mercutio/releases/tag/0.1.0
