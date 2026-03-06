@@ -44,7 +44,10 @@ fn macro_generated_tools_work_with_server() {
     let output = server.handle(msg);
 
     match output {
-        Output::ToolCall(TestTools::GetWeather(input, responder)) => {
+        Output::ToolCall {
+            tool: TestTools::GetWeather(input),
+            responder,
+        } => {
             assert_eq!(input.city, "Berlin");
             let response = responder.success("Sunny, 22C");
             assert!(matches!(

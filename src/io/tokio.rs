@@ -8,23 +8,23 @@ use std::future::Future;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 pub use super::IoError;
-use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
+use crate::{JsonRpcError, McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
 
 /// Handles tool invocations for an MCP server.
 ///
-/// A blanket implementation covers `FnMut(R) -> OutgoingMessage` for simple handlers. For async
-/// handlers with mutable state, implement this trait on a struct.
+/// A blanket implementation covers `FnMut(R) -> Result<ToolResult, JsonRpcError>` for simple
+/// handlers. For async handlers with mutable state, implement this trait on a struct.
 pub trait ToolHandler<R: ToolRegistry> {
-    /// Handles a tool invocation and returns the response.
-    fn handle(&mut self, tool: R) -> impl Future<Output = OutgoingMessage>;
+    /// Handles a tool invocation and returns the result or an error.
+    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolResult, JsonRpcError>>;
 }
 
 impl<R, F> ToolHandler<R> for F
 where
     R: ToolRegistry,
-    F: FnMut(R) -> OutgoingMessage,
+    F: FnMut(R) -> Result<ToolResult, JsonRpcError>,
 {
-    async fn handle(&mut self, tool: R) -> OutgoingMessage {
+    async fn handle(&mut self, tool: R) -> Result<ToolResult, JsonRpcError> {
         self(tool)
     }
 }
@@ -51,7 +51,7 @@ where
 /// # Example
 ///
 /// ```no_run
-/// use mercutio::{McpServer, OutgoingMessage, io::tokio::{run_stdio, ToolHandler}};
+/// use mercutio::{McpServer, JsonRpcError, ToolResult, io::tokio::{run_stdio, ToolHandler}};
 ///
 /// mercutio::tool_registry! {
 ///     enum MyTools {
@@ -64,11 +64,11 @@ where
 /// }
 ///
 /// impl ToolHandler<MyTools> for Handler {
-///     async fn handle(&mut self, tool: MyTools) -> OutgoingMessage {
+///     async fn handle(&mut self, tool: MyTools) -> Result<ToolResult, JsonRpcError> {
 ///         self.request_count += 1;
 ///         match tool {
-///             MyTools::GetWeather(input, responder) => {
-///                 responder.success(format!("Weather in {}: sunny", input.city))
+///             MyTools::GetWeather(input) => {
+///                 Ok(format!("Weather in {}: sunny", input.city).into())
 ///             }
 ///         }
 ///     }
@@ -122,8 +122,11 @@ where
             Output::Send(response) => {
                 write_message(&mut output, response).await?;
             }
-            Output::ToolCall(tool) => {
-                let response = handler.handle(tool).await;
+            Output::ToolCall { tool, responder } => {
+                let response = match handler.handle(tool).await {
+                    Ok(result) => responder.success(result),
+                    Err(e) => responder.error(e),
+                };
                 write_message(&mut output, response).await?;
             }
             Output::ProtocolError(e) => {

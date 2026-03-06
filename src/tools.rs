@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use rust_mcp_schema::{CallToolResult, ContentBlock, RequestId, ToolInputSchema};
+use rust_mcp_schema::{CallToolResult, ContentBlock, ToolInputSchema};
 use serde::Serialize;
 
 use crate::JsonRpcError;
@@ -218,18 +218,14 @@ fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
 /// Registry of available tools.
 ///
 /// Implemented by enums representing the set of tools a server supports. Each variant
-/// corresponds to a tool and contains its parsed input plus a [`Responder`](crate::Responder).
-/// The [`tool_registry`](crate::tool_registry) macro generates this implementation automatically.
+/// corresponds to a tool and contains its parsed input. The
+/// [`tool_registry`](crate::tool_registry) macro generates this implementation automatically.
 pub trait ToolRegistry: Sized {
     /// Whether tools are enabled. Used to advertise tool capabilities during init.
     const ENABLED: bool = true;
 
     /// Parses a tool call into a typed enum variant.
-    fn parse(
-        name: &str,
-        arguments: serde_json::Value,
-        id: RequestId,
-    ) -> std::result::Result<Self, JsonRpcError>;
+    fn parse(name: &str, arguments: serde_json::Value) -> std::result::Result<Self, JsonRpcError>;
 
     /// Returns tool definitions for `tools/list`.
     fn definitions() -> Vec<ToolDefinition>;
@@ -242,11 +238,7 @@ pub enum NoTools {}
 impl ToolRegistry for NoTools {
     const ENABLED: bool = false;
 
-    fn parse(
-        name: &str,
-        _arguments: serde_json::Value,
-        _id: RequestId,
-    ) -> std::result::Result<Self, JsonRpcError> {
+    fn parse(name: &str, _arguments: serde_json::Value) -> std::result::Result<Self, JsonRpcError> {
         Err(JsonRpcError::MethodNotFound {
             msg: format!("unknown tool: {name}"),
         })
@@ -332,7 +324,7 @@ macro_rules! tool_registry {
         pub enum $enum_name {
             $(
                 #[doc = concat!("The `", $tool_name, "` tool.")]
-                $variant($variant, $crate::Responder<$crate::ToolResult>),
+                $variant($variant),
             )*
         }
 
@@ -340,7 +332,6 @@ macro_rules! tool_registry {
             fn parse(
                 name: &str,
                 arguments: $crate::serde_json::Value,
-                id: $crate::rust_mcp_schema::RequestId,
             ) -> std::result::Result<Self, $crate::JsonRpcError> {
                 match name {
                     $(
@@ -349,7 +340,7 @@ macro_rules! tool_registry {
                                 .map_err(|e| $crate::JsonRpcError::InvalidParams {
                                     msg: format!("{}: {}", $tool_name, e),
                                 })?;
-                            Ok(Self::$variant(input, $crate::Responder::new(id)))
+                            Ok(Self::$variant(input))
                         }
                     )*
                     _ => Err($crate::JsonRpcError::MethodNotFound {
@@ -381,11 +372,7 @@ mod tests {
 
     #[test]
     fn no_tools_parse_returns_error() {
-        let result = NoTools::parse(
-            "anything",
-            serde_json::Value::Null,
-            rust_mcp_schema::RequestId::String("1".into()),
-        );
+        let result = NoTools::parse("anything", serde_json::Value::Null);
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, JsonRpcError::MethodNotFound { .. }));

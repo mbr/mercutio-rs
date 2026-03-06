@@ -57,8 +57,8 @@
 //!
 //!     match server.handle(msg) {
 //!         Output::Send(response) => send_to_client(response),
-//!         Output::ToolCall(tool) => match tool {
-//!             MyTools::GetWeather(input, responder) => {
+//!         Output::ToolCall { tool, responder } => match tool {
+//!             MyTools::GetWeather(input) => {
 //!                 let weather = fetch_weather(&input.city);
 //!                 send_to_client(responder.success(format!("{}°C", weather.temp)));
 //!             }
@@ -299,14 +299,18 @@ pub enum ProtocolError {
 /// Output from handling a message.
 ///
 /// Generic over the tool registry type. The [`ToolCall`](Output::ToolCall) variant contains
-/// the parsed tool input and a typed responder, enabling compile-time verification of
-/// response types.
+/// the parsed tool input and a [`Responder`] for sending the result.
 #[must_use = "output must be handled"]
 pub enum Output<R: ToolRegistry> {
     /// Send this message to the client.
     Send(OutgoingMessage),
-    /// Tool call with parsed input and typed responder.
-    ToolCall(R),
+    /// Tool call with parsed input and responder for the result.
+    ToolCall {
+        /// Parsed tool input.
+        tool: R,
+        /// Responder for sending the tool result.
+        responder: Responder<ToolResult>,
+    },
     /// No action needed.
     None,
     /// Protocol error - caller should close connection.
@@ -448,8 +452,11 @@ impl<R: ToolRegistry> McpServer<R> {
             .map(serde_json::Value::Object)
             .unwrap_or(serde_json::Value::Null);
 
-        match R::parse(&params.name, arguments, id.clone()) {
-            Ok(registry_value) => Ok(Output::ToolCall(registry_value)),
+        match R::parse(&params.name, arguments) {
+            Ok(tool) => Ok(Output::ToolCall {
+                tool,
+                responder: Responder::new(id),
+            }),
             Err(e) => Ok(Output::Send(e.into_response(id))),
         }
     }

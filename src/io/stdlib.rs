@@ -6,13 +6,12 @@
 use std::io::{BufRead, BufReader, Write};
 
 pub use super::IoError;
-use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
+use crate::{JsonRpcError, McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
 
 /// Runs an MCP server over stdin/stdout.
 ///
 /// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must return an [`OutgoingMessage`] to send
-/// back to the client.
+/// handler is called for each tool invocation and must return a [`ToolResult`] or error.
 ///
 /// Returns when stdin reaches EOF or a protocol error occurs.
 ///
@@ -39,8 +38,8 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 ///         .build();
 ///
 ///     run_stdio(server, |tool| match tool {
-///         MyTools::GetWeather(input, responder) => {
-///             responder.success(format!("Weather in {}: sunny", input.city))
+///         MyTools::GetWeather(input) => {
+///             Ok(format!("Weather in {}: sunny", input.city).into())
 ///         }
 ///     })
 /// }
@@ -48,7 +47,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 pub fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> OutgoingMessage,
+    H: FnMut(R) -> Result<ToolResult, JsonRpcError>,
 {
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
@@ -64,7 +63,7 @@ fn run_on<R, H, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> OutgoingMessage,
+    H: FnMut(R) -> Result<ToolResult, JsonRpcError>,
     I: BufRead,
     O: Write,
 {
@@ -83,8 +82,11 @@ where
             Output::Send(response) => {
                 write_message(&mut output, response)?;
             }
-            Output::ToolCall(tool) => {
-                let response = handler(tool);
+            Output::ToolCall { tool, responder } => {
+                let response = match handler(tool) {
+                    Ok(result) => responder.success(result),
+                    Err(e) => responder.error(e),
+                };
                 write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {

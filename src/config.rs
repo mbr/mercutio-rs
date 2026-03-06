@@ -109,19 +109,13 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 
 #[cfg(test)]
 mod tests {
-    use rust_mcp_schema::RequestId;
-
     use crate::{JsonRpcError, McpServer, ToolDefinition, ToolRegistry};
 
     /// Minimal tool registry for testing builder behavior.
     enum TestTools {}
 
     impl ToolRegistry for TestTools {
-        fn parse(
-            name: &str,
-            _arguments: serde_json::Value,
-            _id: RequestId,
-        ) -> Result<Self, JsonRpcError> {
+        fn parse(name: &str, _arguments: serde_json::Value) -> Result<Self, JsonRpcError> {
             Err(JsonRpcError::MethodNotFound {
                 msg: format!("unknown tool: {name}"),
             })
