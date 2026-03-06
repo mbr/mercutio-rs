@@ -24,6 +24,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 /// # Example
 ///
 /// ```no_run
+/// use std::convert::Infallible;
 /// use mercutio::{McpServer, io::stdlib::run_stdio};
 ///
 /// mercutio::tool_registry! {
@@ -38,7 +39,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 ///         .version("1.0.0")
 ///         .build();
 ///
-///     run_stdio(server, |tool| -> Result<String, std::convert::Infallible> {
+///     run_stdio(server, |tool| -> Result<String, Infallible> {
 ///         match tool {
 ///             MyTools::GetWeather(input) => {
 ///                 Ok(format!("Weather in {}: sunny", input.city))

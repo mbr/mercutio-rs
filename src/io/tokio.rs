@@ -58,6 +58,7 @@ where
 /// # Example
 ///
 /// ```no_run
+/// use std::convert::Infallible;
 /// use mercutio::{McpServer, ToolOutput, io::tokio::{run_stdio, ToolHandler}};
 ///
 /// mercutio::tool_registry! {
@@ -71,7 +72,7 @@ where
 /// }
 ///
 /// impl ToolHandler<MyTools> for Handler {
-///     type Error = std::convert::Infallible;
+///     type Error = Infallible;
 ///
 ///     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
 ///         self.request_count += 1;
