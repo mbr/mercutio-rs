@@ -80,14 +80,27 @@ run_stdio(server, |tool| match tool {
 
 ### io-tokio
 
-Async version using Tokio:
+Async version using Tokio. Implement `ToolHandler` on a struct to use async operations:
 
 ```rust
-use mercutio::{io::tokio::run_stdio, McpServer};
+use mercutio::{McpServer, OutgoingMessage, io::tokio::{run_stdio, ToolHandler}};
 
 mercutio::tool_registry! {
     enum MyTools {
         GetWeather("get_weather", "Gets weather") { city: String },
+    }
+}
+
+struct Handler;
+
+impl ToolHandler<MyTools> for Handler {
+    async fn handle(&mut self, tool: MyTools) -> OutgoingMessage {
+        match tool {
+            MyTools::GetWeather(input, responder) => {
+                let weather = fetch_weather(&input.city).await;
+                responder.success(format!("Weather in {}: {}", input.city, weather))
+            }
+        }
     }
 }
 
@@ -98,12 +111,6 @@ async fn main() -> Result<(), mercutio::io::tokio::IoError> {
         .version("1.0.0")
         .build();
 
-    run_stdio(server, |tool| async move {
-        match tool {
-            MyTools::GetWeather(input, responder) => {
-                responder.success(format!("Weather in {}: sunny", input.city))
-            }
-        }
-    }).await
+    run_stdio(server, Handler).await
 }
 ```
