@@ -85,7 +85,7 @@
 mod config;
 mod tools;
 
-#[cfg(any(feature = "io-stdlib", feature = "io-tokio"))]
+#[cfg(any(feature = "io-stdlib", feature = "io-tokio", feature = "io-axum"))]
 pub mod io;
 
 use std::{marker::PhantomData, mem};

@@ -15,6 +15,10 @@ pub mod stdlib;
 #[cfg_attr(docsrs, doc(cfg(feature = "io-tokio")))]
 pub mod tokio;
 
+#[cfg(feature = "io-axum")]
+#[cfg_attr(docsrs, doc(cfg(feature = "io-axum")))]
+pub mod axum;
+
 /// Errors from I/O transports.
 #[derive(Debug, Error)]
 pub enum IoError {
