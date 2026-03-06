@@ -23,8 +23,9 @@
 //! not yet supported.
 
 mod session_id;
+mod sessions;
 
-use std::{collections::HashMap, future::Future, sync::Arc};
+use std::{future::Future, sync::Arc};
 
 use axum::{
     Router,
@@ -35,12 +36,14 @@ use axum::{
     routing::{delete, get, post},
 };
 use rand::Rng;
-use tokio::sync::RwLock;
 
-pub use self::session_id::{
-    McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
+pub use self::{
+    session_id::{
+        McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
+    },
+    sessions::Sessions,
 };
-use crate::{McpServer, McpServerBuilder, Output, ToolOutput, ToolRegistry, parse_line};
+use crate::{Output, ToolOutput, ToolRegistry, parse_line};
 
 /// Handles tool invocations for an MCP server.
 ///
@@ -66,53 +69,6 @@ where
 
     async fn handle(&self, tool: R) -> Result<ToolOutput, E> {
         self(tool).await.map(Into::into)
-    }
-}
-
-/// Session storage for MCP servers.
-///
-/// Each session has its own [`McpServer`] instance tracking protocol state. Sessions are created
-/// on `initialize` requests and removed on `DELETE` or timeout.
-pub struct Sessions<R: ToolRegistry> {
-    /// Map of session ID to server instance.
-    servers: RwLock<HashMap<McpSessionId, tokio::sync::Mutex<McpServer<R>>>>,
-    /// Builder for creating new server instances.
-    builder: McpServerBuilder<R>,
-}
-
-impl<R: ToolRegistry> Sessions<R> {
-    /// Creates a new session store with the given server builder.
-    ///
-    /// The builder is used to create a fresh [`McpServer`] for each new session.
-    pub fn new(builder: McpServerBuilder<R>) -> Self {
-        Self {
-            servers: RwLock::new(HashMap::new()),
-            builder,
-        }
-    }
-
-    /// Inserts a new session with the given ID.
-    async fn insert(&self, id: McpSessionId) {
-        let server = self.builder.build();
-        self.servers
-            .write()
-            .await
-            .insert(id, tokio::sync::Mutex::new(server));
-    }
-
-    /// Removes a session by ID. Returns true if the session existed.
-    pub async fn remove(&self, id: McpSessionId) -> bool {
-        self.servers.write().await.remove(&id).is_some()
-    }
-
-    /// Returns the number of active sessions.
-    pub async fn len(&self) -> usize {
-        self.servers.read().await.len()
-    }
-
-    /// Returns true if there are no active sessions.
-    pub async fn is_empty(&self) -> bool {
-        self.servers.read().await.is_empty()
     }
 }
 
