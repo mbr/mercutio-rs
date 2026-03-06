@@ -57,12 +57,14 @@
 //!
 //!     match server.handle(msg) {
 //!         Output::Send(response) => send_to_client(response),
-//!         Output::ToolCall { tool, responder } => match tool {
-//!             MyTools::GetWeather(input) => {
-//!                 let weather = fetch_weather(&input.city);
-//!                 send_to_client(responder.success(format!("{}°C", weather.temp)));
-//!             }
-//!         },
+//!         Output::ToolCall { tool, responder } => {
+//!             let result = match tool {
+//!                 MyTools::GetWeather(input) => {
+//!                     fetch_weather(&input.city).map(|w| format!("{}°C", w.temp))
+//!                 }
+//!             };
+//!             send_to_client(responder.respond(result));
+//!         }
 //!         Output::ProtocolError(e) => break,
 //!         Output::None => {}
 //!     }
@@ -102,11 +104,10 @@ use rust_mcp_schema::{
 pub use schemars;
 #[doc(hidden)]
 pub use serde;
-use serde::Serialize;
 #[doc(hidden)]
 pub use serde_json;
 use thiserror::Error;
-pub use tools::{NoTools, ToolDef, ToolDefinition, ToolRegistry, ToolResult};
+pub use tools::{IntoToolResponse, NoTools, ToolDef, ToolDefinition, ToolOutput, ToolRegistry};
 
 /// The connected MCP client.
 ///
@@ -165,52 +166,63 @@ impl OutgoingMessage {
     }
 }
 
-/// Generic response builder for deferred request handling.
+/// Response builder for tool calls.
+///
+/// Provides two methods for sending responses:
+///
+/// - [`respond`](Self::respond): Handles both success values and domain errors. Accepts bare
+///   values (`String`, [`ToolOutput`]) or `Result<T, E>` where `Err` becomes a tool error
+///   (`is_error: true`). This is the common case.
+///
+/// - [`rpc_error`](Self::rpc_error): Sends a JSON-RPC error response. Use this only for
+///   protocol-level failures (rare after successful tool parsing).
+///
+/// # Example
+///
+/// ```ignore
+/// // Direct value
+/// responder.respond("Success!")
+///
+/// // Result - Ok becomes success, Err becomes tool error
+/// responder.respond(std::fs::read_to_string(&path))
+///
+/// // With ToolOutput builder
+/// responder.respond(ToolOutput::json(&my_data))
+///
+/// // Rare: protocol-level error
+/// responder.rpc_error(JsonRpcError::InternalError { msg: "..." })
+/// ```
 #[must_use = "request must be responded to"]
-pub struct Responder<T> {
+pub struct Responder {
     /// Request ID to respond to.
     id: RequestId,
-    /// Marker for the response type.
-    _marker: PhantomData<fn(T)>,
 }
 
-impl<T: Serialize> Responder<T> {
+impl Responder {
     /// Creates a new responder for the given request ID.
     pub fn new(id: RequestId) -> Self {
-        Self {
-            id,
-            _marker: PhantomData,
-        }
+        Self { id }
     }
 
-    /// Creates a success response with the given value.
+    /// Sends a tool response.
     ///
-    /// Accepts any value that can be converted into `T` via [`Into`].
-    ///
-    /// # Panics
-    ///
-    /// Will panic if serialization into a JSON object fails for the given `T`.
-    /// It is up to the caller to ensure every `T` serializes into a JSON object.
-    pub fn success<V: Into<T>>(self, value: V) -> OutgoingMessage {
-        let inner: T = value.into();
-        let json_value = serde_json::to_value(inner).expect("response serialization failed");
-        let extra = if let serde_json::Value::Object(obj) = json_value {
-            obj
-        } else {
-            panic!("provided `value` does not serialize into JSON object");
-        };
-        let response = JsonrpcResponse::new(
-            self.id,
-            Result {
-                meta: None,
-                extra: Some(extra),
-            },
-        );
+    /// Accepts bare values (`String`, `&str`, [`ToolOutput`]) or `Result<T, E>`:
+    /// - Bare values and `Ok(v)` become successful responses (`is_error: false`)
+    /// - `Err(e)` becomes a tool error (`is_error: true`) with the error's display text
+    pub fn respond(self, value: impl IntoToolResponse) -> OutgoingMessage {
+        let call_result = value.into_tool_response();
+        let json_value =
+            serde_json::to_value(&call_result).expect("CallToolResult serialization failed");
+        let extra = json_value.as_object().cloned();
+        let response = JsonrpcResponse::new(self.id, Result { meta: None, extra });
         OutgoingMessage(JsonrpcMessage::Response(response))
     }
 
-    /// Creates an error response.
-    pub fn error<I: Into<JsonRpcError>>(self, error: I) -> OutgoingMessage {
+    /// Sends a JSON-RPC error response.
+    ///
+    /// Use this for protocol-level failures only. After successful tool parsing, this is rarely
+    /// needed; domain errors should go through [`respond`](Self::respond) with a `Result::Err`.
+    pub fn rpc_error(self, error: impl Into<JsonRpcError>) -> OutgoingMessage {
         let err: JsonRpcError = error.into();
         let rpc_error = RpcError {
             code: err.code(),
@@ -219,17 +231,6 @@ impl<T: Serialize> Responder<T> {
         };
         let error_msg = JsonrpcError::new(rpc_error, self.id);
         OutgoingMessage(JsonrpcMessage::Error(error_msg))
-    }
-
-    /// Creates a response from a result, converting errors to JSON-RPC errors.
-    pub fn respond<I: Into<JsonRpcError>>(
-        self,
-        result: std::result::Result<T, I>,
-    ) -> OutgoingMessage {
-        match result {
-            Ok(v) => self.success(v),
-            Err(e) => self.error(e),
-        }
     }
 }
 
@@ -309,7 +310,7 @@ pub enum Output<R: ToolRegistry> {
         /// Parsed tool input.
         tool: R,
         /// Responder for sending the tool result.
-        responder: Responder<ToolResult>,
+        responder: Responder,
     },
     /// No action needed.
     None,

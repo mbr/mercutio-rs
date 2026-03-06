@@ -21,65 +21,53 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
     const DESCRIPTION: &'static str;
 }
 
-/// Result of a tool invocation, wrapping MCP content blocks.
+/// Successful output from a tool invocation.
 ///
-/// Provides a builder API and ergonomic conversions for constructing tool results.
+/// Provides a builder API and ergonomic conversions for constructing tool output. For domain
+/// errors (tool ran but failed), return an `Err` from your handler instead of using this type.
 ///
 /// # Simple Text
 ///
 /// Return a text response (accepts `&str`, [`String`], or [`format!`] results):
 /// ```ignore
-/// responder.success("Operation completed")
-/// responder.success(format!("Found {} items", count))
+/// Ok("Operation completed")
+/// Ok(format!("Found {} items", count))
 /// ```
 ///
 /// # Structured JSON
 ///
-/// Return structured data with [`ToolResult::json`]. This sets `structuredContent` and
-/// adds the JSON as escaped text for backwards compatibility (per MCP spec):
+/// Return structured data with [`ToolOutput::json`]. This sets `structuredContent` and adds
+/// the JSON as escaped text for backwards compatibility (per MCP spec):
 /// ```ignore
-/// responder.success(ToolResult::json(&weather_data))
+/// Ok(ToolOutput::json(&weather_data))
 /// ```
 ///
 /// # Multiple Content Blocks
 ///
 /// Combine multiple content blocks using the builder:
 /// ```ignore
-/// responder.success(ToolResult::new()
+/// Ok(ToolOutput::new()
 ///     .text("Query results:")
 ///     .text(format!("Found {} matches", results.len())))
 /// ```
-///
-/// # Error Results
-///
-/// For tool errors (where `is_error: true`), use [`ToolResult::error`]:
-/// ```ignore
-/// responder.success(ToolResult::error("File not found"))
-/// responder.success(ToolResult::error(err.to_string()))
-/// ```
-///
-/// This differs from [`Responder::error`](crate::Responder::error), which returns a JSON-RPC
-/// error response. Use [`ToolResult::error`] when the tool executed but encountered a domain
-/// error; use [`Responder::error`](crate::Responder::error) for protocol-level failures.
-#[derive(Debug, Serialize)]
-#[serde(transparent)]
-pub struct ToolResult(CallToolResult);
+#[derive(Debug, Default)]
+pub struct ToolOutput {
+    /// Content blocks.
+    content: Vec<ContentBlock>,
+    /// Structured content.
+    structured_content: Option<serde_json::Map<String, serde_json::Value>>,
+}
 
-impl ToolResult {
-    /// Creates an empty result for building.
+impl ToolOutput {
+    /// Creates an empty output for building.
     pub fn new() -> Self {
-        Self(CallToolResult {
-            content: vec![],
-            is_error: Some(false),
-            meta: None,
-            structured_content: None,
-        })
+        Self::default()
     }
 
-    /// Creates a result with structured JSON content and text representation.
+    /// Creates output with structured JSON content and text representation.
     ///
-    /// Sets `structuredContent` and adds the JSON as escaped text to `content` for
-    /// backwards compatibility (per MCP spec recommendation).
+    /// Sets `structuredContent` and adds the JSON as escaped text to `content` for backwards
+    /// compatibility (per MCP spec recommendation).
     ///
     /// # Panics
     ///
@@ -89,59 +77,89 @@ impl ToolResult {
         Self::new().text(text).structured(value)
     }
 
-    /// Creates an error result with the given message.
-    pub fn error<I: Into<String>>(message: I) -> Self {
-        Self::new().text(message).flag_as_error(true)
-    }
-
     /// Adds a text content block.
     pub fn text<I: Into<String>>(mut self, text: I) -> Self {
-        self.0.content.push(ContentBlock::text_content(text.into()));
+        self.content.push(ContentBlock::text_content(text.into()));
         self
     }
 
     /// Sets structured content.
     ///
-    /// Sets `structuredContent` to the serialized value. Does not modify `content`;
-    /// use [`Self::json`] or add a text block manually for backwards compatibility.
+    /// Sets `structuredContent` to the serialized value. Does not modify `content`; use
+    /// [`Self::json`] or add a text block manually for backwards compatibility.
     pub fn structured<T: Serialize>(mut self, value: &T) -> Self {
         let json_value = serde_json::to_value(value).expect("serialization failed");
         if let serde_json::Value::Object(map) = json_value {
-            self.0.structured_content = Some(map);
+            self.structured_content = Some(map);
         }
         self
     }
 
-    /// Marks this result as an error.
-    ///
-    /// Sets `is_error` to the given value, signaling to the LLM that the operation failed.
-    pub fn flag_as_error(mut self, value: bool) -> Self {
-        self.0.is_error = Some(value);
-        self
+    /// Converts to the MCP [`CallToolResult`] with the given error flag.
+    fn into_call_result(self, is_error: bool) -> CallToolResult {
+        CallToolResult {
+            content: self.content,
+            is_error: Some(is_error),
+            structured_content: self.structured_content,
+            meta: None,
+        }
     }
 }
 
-impl Default for ToolResult {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl From<String> for ToolResult {
+impl From<String> for ToolOutput {
     fn from(text: String) -> Self {
         Self::new().text(text)
     }
 }
 
-impl From<&str> for ToolResult {
+impl From<&str> for ToolOutput {
     fn from(text: &str) -> Self {
         Self::new().text(text)
     }
 }
 
-impl From<CallToolResult> for ToolResult {
-    fn from(result: CallToolResult) -> Self {
-        Self(result)
+/// Converts a value into a tool response ([`CallToolResult`]).
+///
+/// This trait enables [`Responder::respond`](crate::Responder::respond) to accept both direct
+/// values and `Result` types:
+///
+/// - **Direct values** (`String`, `&str`, [`ToolOutput`]): Converted to a successful response
+///   with `is_error: false`.
+/// - **`Result<T, E>`**: `Ok(v)` becomes a successful response; `Err(e)` becomes a domain error
+///   response with `is_error: true` and the error's display text as content.
+pub trait IntoToolResponse {
+    /// Converts this value into a [`CallToolResult`].
+    fn into_tool_response(self) -> CallToolResult;
+}
+
+impl IntoToolResponse for ToolOutput {
+    fn into_tool_response(self) -> CallToolResult {
+        self.into_call_result(false)
+    }
+}
+
+impl IntoToolResponse for String {
+    fn into_tool_response(self) -> CallToolResult {
+        ToolOutput::from(self).into_call_result(false)
+    }
+}
+
+impl IntoToolResponse for &str {
+    fn into_tool_response(self) -> CallToolResult {
+        ToolOutput::from(self).into_call_result(false)
+    }
+}
+
+impl<T, E> IntoToolResponse for Result<T, E>
+where
+    T: Into<ToolOutput>,
+    E: std::fmt::Display,
+{
+    fn into_tool_response(self) -> CallToolResult {
+        match self {
+            Ok(v) => v.into().into_call_result(false),
+            Err(e) => ToolOutput::new().text(e.to_string()).into_call_result(true),
+        }
     }
 }
 
@@ -362,7 +380,7 @@ macro_rules! tool_registry {
 
 #[cfg(test)]
 mod tests {
-    use super::{NoTools, ToolDefinition, ToolRegistry, ToolResult};
+    use super::{IntoToolResponse, NoTools, ToolDefinition, ToolOutput, ToolRegistry};
     use crate::JsonRpcError;
 
     #[test]
@@ -426,58 +444,70 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_from_string() {
-        let result: ToolResult = "hello".into();
+    fn tool_output_from_string() {
+        let result = "hello".into_tool_response();
         let json = serde_json::to_value(&result).expect("serialize");
         let content = json.get("content").expect("content field");
         assert!(content.is_array());
         assert_eq!(content.as_array().expect("array").len(), 1);
+        assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(false));
     }
 
     #[test]
-    fn tool_result_from_owned_string() {
-        let result: ToolResult = String::from("hello").into();
+    fn tool_output_from_owned_string() {
+        let result = String::from("hello").into_tool_response();
         let json = serde_json::to_value(&result).expect("serialize");
         let content = json.get("content").expect("content field");
         assert!(content.is_array());
     }
 
     #[test]
-    fn tool_result_json_sets_structured_content() {
+    fn tool_output_json_sets_structured_content() {
         #[derive(serde::Serialize)]
         struct Data {
             value: i32,
         }
-        let result = ToolResult::json(&Data { value: 42 });
+        let result = ToolOutput::json(&Data { value: 42 }).into_tool_response();
         let json = serde_json::to_value(&result).expect("serialize");
         assert!(json.get("structuredContent").is_some());
         assert!(json.get("content").expect("content").is_array());
     }
 
     #[test]
-    fn tool_result_error_sets_is_error() {
-        let result = ToolResult::error("something failed");
-        let json = serde_json::to_value(&result).expect("serialize");
+    fn result_err_sets_is_error() {
+        let result: Result<String, &str> = Err("something failed");
+        let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
         assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
-    fn tool_result_builder_multiple_text_blocks() {
-        let result = ToolResult::new().text("first").text("second");
+    fn result_ok_sets_is_error_false() {
+        let result: Result<&str, &str> = Ok("success");
+        let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
+        assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(false));
+    }
+
+    #[test]
+    fn tool_output_builder_multiple_text_blocks() {
+        let result = ToolOutput::new()
+            .text("first")
+            .text("second")
+            .into_tool_response();
         let json = serde_json::to_value(&result).expect("serialize");
         let content = json.get("content").expect("content");
         assert_eq!(content.as_array().expect("array").len(), 2);
     }
 
     #[test]
-    fn tool_result_builder_text_and_structured() {
+    fn tool_output_builder_text_and_structured() {
         #[derive(serde::Serialize)]
         struct Data {
             value: i32,
         }
-        let result = ToolResult::new()
+        let result = ToolOutput::new()
             .text("summary")
-            .structured(&Data { value: 1 });
+            .structured(&Data { value: 1 })
+            .into_tool_response();
         let json = serde_json::to_value(&result).expect("serialize");
         assert!(json.get("structuredContent").is_some());
         assert_eq!(

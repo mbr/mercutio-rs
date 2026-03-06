@@ -10,14 +10,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `ToolHandler` trait for async tool handlers with mutable state.
+- `ToolOutput` type for building successful tool responses.
+- `IntoToolResponse` trait for ergonomic handler return types.
 
 ### Changed
 
 - Tool enum variants no longer contain `Responder`; moved to `Output::ToolCall { tool, responder }`.
-- `ToolHandler::handle` and `io::stdlib` handler now return `ToolResult` directly.
+- `Responder` simplified: `respond()` accepts bare values or `Result<T, E>`, `rpc_error()` for protocol errors.
+- Handlers return `impl IntoToolResponse` (e.g., `String`, `ToolOutput`, `Result<T, E>`).
 - `ToolRegistry::parse` no longer takes `id` parameter.
 - `io::tokio::run_stdio` now takes `impl ToolHandler<R>` instead of async closures.
 - Flattened module structure: removed `protocol` module, types now at crate root.
+
+### Removed
+
+- `ToolResult` type (replaced by `ToolOutput` and `IntoToolResponse`).
 
 ## [0.1.0] - 2026-03-06
 

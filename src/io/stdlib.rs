@@ -6,12 +6,13 @@
 use std::io::{BufRead, BufReader, Write};
 
 pub use super::IoError;
-use crate::{McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
+use crate::{IntoToolResponse, McpServer, OutgoingMessage, Output, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout.
 ///
 /// Reads newline-delimited JSON-RPC messages from stdin and writes responses to stdout. The
-/// handler is called for each tool invocation and must return a [`ToolResult`] or error.
+/// handler is called for each tool invocation and must return something implementing
+/// [`IntoToolResponse`] (e.g., `String`, [`ToolOutput`](crate::ToolOutput), or `Result<T, E>`).
 ///
 /// Returns when stdin reaches EOF or a protocol error occurs.
 ///
@@ -39,15 +40,16 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry, ToolResult};
 ///
 ///     run_stdio(server, |tool| match tool {
 ///         MyTools::GetWeather(input) => {
-///             format!("Weather in {}: sunny", input.city).into()
+///             Ok::<_, std::io::Error>(format!("Weather in {}: sunny", input.city))
 ///         }
 ///     })
 /// }
 /// ```
-pub fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub fn run_stdio<R, H, T>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> ToolResult,
+    T: IntoToolResponse,
+    H: FnMut(R) -> T,
 {
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
@@ -55,7 +57,7 @@ where
 }
 
 /// Runs an MCP server on arbitrary buffered input/output streams.
-fn run_on<R, H, I, O>(
+fn run_on<R, H, T, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
@@ -63,7 +65,8 @@ fn run_on<R, H, I, O>(
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: FnMut(R) -> ToolResult,
+    T: IntoToolResponse,
+    H: FnMut(R) -> T,
     I: BufRead,
     O: Write,
 {
@@ -83,7 +86,7 @@ where
                 write_message(&mut output, response)?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = responder.success(handler(tool));
+                let response = responder.respond(handler(tool));
                 write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {
@@ -126,7 +129,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| -> String { unreachable!("no tools") },
         );
 
         assert!(result.is_ok());
@@ -152,7 +155,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| -> String { unreachable!("no tools") },
         );
 
         assert!(matches!(result, Err(IoError::Parse(_))));
@@ -168,7 +171,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| unreachable!("no tools"),
+            |_: NoTools| -> String { unreachable!("no tools") },
         );
 
         assert!(matches!(result, Err(IoError::Protocol(_))));

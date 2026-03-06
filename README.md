@@ -36,9 +36,13 @@ loop {
         // Protocol responses (init, tool list, etc.)
         Output::Send(msg) => send(msg.into_inner()),
         // Tool invocation - handle it and send the response
-        Output::ToolCall { tool: MyTools::GetWeather(input), responder } => {
-            let weather = get_weather(&input.city);
-            send(responder.success(format!("{}C", weather.temp)).into_inner());
+        Output::ToolCall { tool, responder } => {
+            let result = match tool {
+                MyTools::GetWeather(input) => {
+                    get_weather(&input.city).map(|w| format!("{}C", w.temp))
+                }
+            };
+            send(responder.respond(result).into_inner());
         }
         Output::ProtocolError(err) => break,
         Output::None => {}
@@ -72,7 +76,7 @@ let server = McpServer::<MyTools>::builder()
     .build();
 
 run_stdio(server, |tool| match tool {
-    MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city).into(),
+    MyTools::GetWeather(input) => Ok::<_, std::io::Error>(format!("Weather in {}: sunny", input.city)),
 })?;
 ```
 
@@ -81,7 +85,7 @@ run_stdio(server, |tool| match tool {
 Async version using Tokio. Implement `ToolHandler` on a struct to use async operations:
 
 ```rust
-use mercutio::{McpServer, ToolResult, io::tokio::{run_stdio, ToolHandler}};
+use mercutio::{McpServer, io::tokio::{run_stdio, ToolHandler}};
 
 mercutio::tool_registry! {
     enum MyTools {
@@ -92,11 +96,13 @@ mercutio::tool_registry! {
 struct Handler;
 
 impl ToolHandler<MyTools> for Handler {
-    async fn handle(&mut self, tool: MyTools) -> ToolResult {
+    type Response = Result<String, std::io::Error>;
+
+    async fn handle(&mut self, tool: MyTools) -> Self::Response {
         match tool {
             MyTools::GetWeather(input) => {
-                let weather = fetch_weather(&input.city).await;
-                format!("Weather in {}: {}", input.city, weather).into()
+                let weather = fetch_weather(&input.city).await?;
+                Ok(format!("Weather in {}: {}", input.city, weather))
             }
         }
     }

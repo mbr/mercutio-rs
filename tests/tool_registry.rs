@@ -49,7 +49,7 @@ fn macro_generated_tools_work_with_server() {
             responder,
         } => {
             assert_eq!(input.city, "Berlin");
-            let response = responder.success("Sunny, 22C");
+            let response = responder.respond("Sunny, 22C");
             assert!(matches!(
                 response.as_inner(),
                 mercutio::rust_mcp_schema::JsonrpcMessage::Response(_)
