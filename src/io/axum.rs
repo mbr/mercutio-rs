@@ -34,7 +34,7 @@ use axum::{
 };
 use tokio::sync::RwLock;
 
-use crate::{McpServer, Output, ToolOutput, ToolRegistry, parse_line};
+use crate::{McpServer, McpServerBuilder, Output, ToolOutput, ToolRegistry, parse_line};
 
 /// Session ID header name per MCP spec.
 pub const SESSION_ID_HEADER: &str = "mcp-session-id";
@@ -73,28 +73,25 @@ where
 pub struct Sessions<R: ToolRegistry> {
     /// Map of session ID to server instance.
     servers: RwLock<HashMap<String, tokio::sync::Mutex<McpServer<R>>>>,
-    /// Factory function for creating new servers.
-    server_fn: Arc<dyn Fn() -> McpServer<R> + Send + Sync>,
+    /// Builder for creating new server instances.
+    builder: McpServerBuilder<R>,
 }
 
 impl<R: ToolRegistry> Sessions<R> {
-    /// Creates a new session store with the given server factory.
+    /// Creates a new session store with the given server builder.
     ///
-    /// The factory is called once per new session to create a fresh [`McpServer`].
-    pub fn new<F>(server_fn: F) -> Self
-    where
-        F: Fn() -> McpServer<R> + Send + Sync + 'static,
-    {
+    /// The builder is used to create a fresh [`McpServer`] for each new session.
+    pub fn new(builder: McpServerBuilder<R>) -> Self {
         Self {
             servers: RwLock::new(HashMap::new()),
-            server_fn: Arc::new(server_fn),
+            builder,
         }
     }
 
     /// Creates a new session and returns its ID.
     async fn create_session(&self) -> String {
         let id = uuid::Uuid::new_v4().to_string();
-        let server = (self.server_fn)();
+        let server = self.builder.build();
         self.servers
             .write()
             .await
@@ -158,12 +155,9 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 ///     }
 /// }
 ///
-/// let sessions = Sessions::new(|| {
-///     McpServer::<MyTools>::builder()
-///         .name("my-server")
-///         .version("1.0.0")
-///         .build()
-/// });
+/// let mut builder = McpServer::<MyTools>::builder();
+/// builder.name("my-server").version("1.0.0");
+/// let sessions = Sessions::new(builder);
 ///
 /// let router = mcp_router(sessions, |tool: MyTools| async move {
 ///     match tool {
@@ -178,7 +172,7 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 /// ```
 pub fn mcp_router<R, H>(sessions: Sessions<R>, handler: H) -> Router
 where
-    R: ToolRegistry + Send + 'static,
+    R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let state = AppState {
@@ -365,7 +359,9 @@ mod tests {
     use crate::{McpServer, NoTools};
 
     fn test_sessions() -> Sessions<NoTools> {
-        Sessions::new(|| McpServer::builder().name("test").version("1.0").build())
+        let mut builder = McpServer::builder();
+        builder.name("test").version("1.0");
+        Sessions::new(builder)
     }
 
     fn test_handler(_: NoTools) -> Result<String, std::convert::Infallible> {
@@ -490,7 +486,9 @@ mod tests {
 
     #[tokio::test]
     async fn delete_removes_session() {
-        let sessions = Sessions::new(|| McpServer::builder().name("test").version("1.0").build());
+        let mut builder = McpServer::builder();
+        builder.name("test").version("1.0");
+        let sessions = Sessions::new(builder);
         let router = mcp_router(sessions, |t| async { test_handler(t) });
 
         let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
