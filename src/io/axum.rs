@@ -139,10 +139,20 @@ where
         }
     };
 
-    match session_id {
-        Some(id) => handle_existing_session(&state, id, msg).await,
-        None => handle_new_session(&state, msg).await,
-    }
+    let session_id = match session_id {
+        Some(id) => id,
+        None => {
+            let id: McpSessionId = rand::rng().random();
+            state
+                .sessions
+                .write()
+                .await
+                .insert(id, Mutex::new(state.builder.build()));
+            id
+        }
+    };
+
+    handle_session(&state, session_id, msg).await
 }
 
 /// Handles GET requests (SSE streams).
@@ -152,8 +162,8 @@ async fn handle_get() -> Response {
     StatusCode::METHOD_NOT_ALLOWED.into_response()
 }
 
-/// Handles a message for an existing session.
-async fn handle_existing_session<R, H>(
+/// Handles a message for a session.
+async fn handle_session<R, H>(
     state: &AppState<R, H>,
     session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
@@ -163,44 +173,14 @@ where
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
     let sessions = state.sessions.read().await;
-    let server_mutex = match sessions.get(&session_id) {
-        Some(s) => s,
-        None => return StatusCode::NOT_FOUND.into_response(),
+    let Some(server_mutex) = sessions.get(&session_id) else {
+        return StatusCode::NOT_FOUND.into_response();
     };
 
-    let mut server = server_mutex.lock().await;
-    let output = server.handle(msg);
-    drop(server);
+    let output = server_mutex.lock().await.handle(msg);
     drop(sessions);
 
-    output_to_response(output, &state.handler, Some(session_id)).await
-}
-
-/// Handles a message for a new session (no session ID header).
-async fn handle_new_session<R, H>(
-    state: &AppState<R, H>,
-    msg: rust_mcp_schema::JsonrpcMessage,
-) -> Response
-where
-    R: ToolRegistry + Send + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
-{
-    let session_id: McpSessionId = rand::rng().random();
-    let server = state.builder.build();
-
-    {
-        let mut sessions = state.sessions.write().await;
-        sessions.insert(session_id, Mutex::new(server));
-    }
-
-    let sessions = state.sessions.read().await;
-    let server_mutex = sessions.get(&session_id).expect("just created");
-    let mut server = server_mutex.lock().await;
-    let output = server.handle(msg);
-    drop(server);
-    drop(sessions);
-
-    if let Output::ProtocolError(_) = &output {
+    if matches!(&output, Output::ProtocolError(_)) {
         state.sessions.write().await.remove(&session_id);
     }
 
