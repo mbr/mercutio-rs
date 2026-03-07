@@ -25,20 +25,51 @@ mercutio::tool_registry! {
 }
 ```
 
-## Handlers
+## Sans-IO Usage
 
-Handlers process tool invocations. There are two traits: `ToolHandler` (`&self`, for concurrent contexts) and `MutToolHandler` (`&mut self`, for exclusive access). Both receive an optional session ID—`Some` for HTTP transports, `None` for stdio.
+The core API is a state machine. Pass in parsed messages, match on the output:
 
 ```rust
-use mercutio::{ToolOutput, io::{McpSessionId, MutToolHandler}};
+use mercutio::{McpServer, Output};
+
+let mut server = McpServer::<MyTools>::builder()
+    .name("my-server")
+    .version("1.0")
+    .build();
+
+loop {
+    let line = read_line_somehow();
+    let msg = mercutio::parse_line(&line)?;
+
+    match server.handle(msg) {
+        Output::Send(response) => send(response.into_inner()),
+        Output::ToolCall { tool, responder } => {
+            let result = match tool {
+                MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city),
+                MyTools::SetReminder(input) => format!("Reminder: {} in {} min", input.message, input.minutes),
+            };
+            send(responder.respond(Ok::<_, std::convert::Infallible>(result)).into_inner());
+        }
+        Output::ProtocolError(_) => break,
+        Output::None => {}
+    }
+}
+```
+
+## Transports
+
+If you'd rather not wire up I/O yourself, the `io-*` feature flags provide ready-made transports. These use handler traits to process tool calls:
+
+```rust
+use mercutio::{ToolOutput, io::{McpSessionId, ToolHandler}};
 
 struct MyHandler;
 
-impl MutToolHandler<MyTools> for MyHandler {
+impl ToolHandler<MyTools> for MyHandler {
     type Error = std::convert::Infallible;
 
     async fn handle(
-        &mut self,
+        &self,
         _session_id: Option<McpSessionId>,
         tool: MyTools,
     ) -> Result<ToolOutput, Self::Error> {
@@ -47,16 +78,14 @@ impl MutToolHandler<MyTools> for MyHandler {
                 Ok(format!("Weather in {}: sunny", input.city).into())
             }
             MyTools::SetReminder(input) => {
-                Ok(format!("Reminder set: {} in {} min", input.message, input.minutes).into())
+                Ok(format!("Reminder: {} in {} min", input.message, input.minutes).into())
             }
         }
     }
 }
 ```
 
-Closures work too via blanket impl: `|_session_id, tool| async move { ... }`.
-
-## Transports
+`ToolHandler` takes `&self` for concurrent contexts; `MutToolHandler` takes `&mut self` for exclusive access. The session ID is `Some` for HTTP (multiple clients share one server), `None` for stdio (one process = one session). Closures work via blanket impl: `|_session_id, tool| async move { ... }`.
 
 ### io-tokio
 
@@ -90,37 +119,9 @@ let app = axum::Router::new().nest("/mcp", router);
 
 For custom session storage, use `McpRouter::builder()` with `.storage()`.
 
-## Custom Transport
+### Example
 
-For WebSockets or other transports, use `McpServer` directly:
-
-```rust
-use mercutio::{McpServer, Output};
-
-let mut server = McpServer::<MyTools>::builder()
-    .name("my-server")
-    .version("1.0")
-    .build();
-
-loop {
-    let line = read_line_somehow();
-    let msg = mercutio::parse_line(&line)?;
-
-    match server.handle(msg) {
-        Output::Send(response) => send(response.into_inner()),
-        Output::ToolCall { tool, responder } => {
-            let result = handle_tool(tool);
-            send(responder.respond(result).into_inner());
-        }
-        Output::ProtocolError(_) => break,
-        Output::None => {}
-    }
-}
-```
-
-## Example
-
-A complete server supporting both stdio and HTTP transports:
+A complete server supporting both transports:
 
 ```rust
 use clap::Parser;
@@ -128,10 +129,7 @@ use mercutio::{McpServer, ToolOutput, io::{McpSessionId, ToolHandler}};
 
 mercutio::tool_registry! {
     enum MyTools {
-        Greet("greet", "Greets someone") {
-            /// Name to greet.
-            name: String,
-        },
+        Greet("greet", "Greets someone") { name: String },
     }
 }
 
@@ -140,11 +138,7 @@ struct MyHandler;
 impl ToolHandler<MyTools> for MyHandler {
     type Error = std::convert::Infallible;
 
-    async fn handle(
-        &self,
-        _session_id: Option<McpSessionId>,
-        tool: MyTools,
-    ) -> Result<ToolOutput, Self::Error> {
+    async fn handle(&self, _: Option<McpSessionId>, tool: MyTools) -> Result<ToolOutput, Self::Error> {
         match tool {
             MyTools::Greet(input) => Ok(format!("Hello, {}!", input.name).into()),
         }
@@ -153,7 +147,6 @@ impl ToolHandler<MyTools> for MyHandler {
 
 #[derive(Parser)]
 struct Args {
-    /// Run as HTTP server instead of stdio.
     #[arg(long)]
     http: bool,
 }
@@ -171,7 +164,6 @@ async fn main() -> anyhow::Result<()> {
     } else {
         mercutio::io::tokio::run_stdio(builder.build(), MyHandler).await?;
     }
-
     Ok(())
 }
 ```
