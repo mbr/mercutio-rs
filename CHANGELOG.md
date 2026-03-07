@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `McpSessionId` type in `io` module for session identification across transports.
+- `SessionStorage` trait for custom session storage implementations.
+- `InMemoryStorage` with configurable capacity and LRU eviction.
+- `McpRouter::builder()` for configuring axum routers with custom storage.
+
+### Changed
+
+- `ToolHandler::handle` and `MutToolHandler::handle` now take `session_id: Option<McpSessionId>` as first parameter.
+- `io::stdlib` handler closure signature changed to `FnMut(Option<McpSessionId>, R) -> Result<T, E>`.
+- `io::axum` now uses `InMemoryStorage` with bounded capacity (default 10,000 sessions) instead of unbounded `HashMap`.
+
 ## [0.3.0] - 2026-03-06
 
 ### Added

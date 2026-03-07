@@ -77,7 +77,7 @@ let server = McpServer::<MyTools>::builder()
     .version("1.0.0")
     .build();
 
-run_stdio(server, |tool| -> Result<String, Infallible> {
+run_stdio(server, |_session_id, tool| -> Result<String, Infallible> {
     match tool {
         MyTools::GetWeather(input) => Ok(format!("Weather in {}: sunny", input.city)),
     }
@@ -103,7 +103,11 @@ struct Handler;
 impl MutToolHandler<MyTools> for Handler {
     type Error = Infallible;
 
-    async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
+    async fn handle(
+        &mut self,
+        _session_id: Option<mercutio::io::McpSessionId>,
+        tool: MyTools,
+    ) -> Result<ToolOutput, Self::Error> {
         match tool {
             MyTools::GetWeather(input) => {
                 Ok(format!("Weather in {}: sunny", input.city).into())
@@ -140,7 +144,7 @@ mercutio::tool_registry! {
 let mut builder = McpServer::<MyTools>::builder();
 builder.name("my-server").version("1.0.0");
 
-let router = mcp_router(builder, |tool: MyTools| async move {
+let router = mcp_router(builder, |_session_id, tool: MyTools| async move {
     match tool {
         MyTools::GetWeather(input) => {
             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
