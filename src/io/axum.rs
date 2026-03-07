@@ -49,26 +49,88 @@
 //! - No batch requests (JSON-RPC arrays)
 //! - No session persistence across server restarts
 
-mod session_id;
-
 use std::{collections::HashMap, sync::Arc};
 
 use axum::{
     Router,
     body::Bytes,
-    extract::State,
-    http::{HeaderValue, StatusCode, header},
+    extract::{FromRequestParts, State},
+    http::{HeaderValue, StatusCode, header, header::ToStrError, request::Parts},
     response::{IntoResponse, Response},
     routing::{delete, get, post},
 };
 use rand::Rng;
+use thiserror::Error;
 use tokio::sync::{Mutex, RwLock};
 
-pub use self::session_id::{
-    McpSessionId, OptionalSessionId, ParseSessionIdError, SESSION_ID_HEADER, SessionIdRejection,
+pub use super::{
+    ToolHandler,
+    session_id::{McpSessionId, ParseSessionIdError},
 };
-pub use super::ToolHandler;
 use crate::{McpServer, McpServerBuilder, Output, ToolRegistry, parse_line};
+
+/// Header name for the MCP session ID per the spec.
+pub const SESSION_ID_HEADER: &str = "mcp-session-id";
+
+/// Rejection type when session ID extraction fails.
+#[derive(Debug, Error)]
+pub enum SessionIdRejection {
+    /// The `Mcp-Session-Id` header is missing.
+    #[error("missing session ID header `{SESSION_ID_HEADER}`")]
+    Missing,
+    /// The header value is not valid UTF-8.
+    #[error("session ID header not valid UTF-8")]
+    InvalidUtf8(#[source] ToStrError),
+    /// The header value failed to parse as a session ID.
+    #[error("invalid session ID")]
+    InvalidFormat(#[source] ParseSessionIdError),
+}
+
+impl IntoResponse for SessionIdRejection {
+    fn into_response(self) -> Response {
+        (StatusCode::BAD_REQUEST, self.to_string()).into_response()
+    }
+}
+
+impl<S> FromRequestParts<S> for McpSessionId
+where
+    S: Send + Sync,
+{
+    type Rejection = SessionIdRejection;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let value = parts
+            .headers
+            .get(SESSION_ID_HEADER)
+            .ok_or(SessionIdRejection::Missing)?;
+
+        let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
+        s.parse().map_err(SessionIdRejection::InvalidFormat)
+    }
+}
+
+/// Extractor for an optional session ID.
+///
+/// Returns `None` if the header is missing, `Some(id)` if valid, or rejects with
+/// [`SessionIdRejection`] if the header is present but malformed.
+#[derive(Clone, Copy, Debug)]
+pub struct OptionalSessionId(pub Option<McpSessionId>);
+
+impl<S> FromRequestParts<S> for OptionalSessionId
+where
+    S: Send + Sync,
+{
+    type Rejection = SessionIdRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        if !parts.headers.contains_key(SESSION_ID_HEADER) {
+            return Ok(Self(None));
+        }
+
+        let id = McpSessionId::from_request_parts(parts, state).await?;
+        Ok(Self(Some(id)))
+    }
+}
 
 /// Type alias for the session storage map.
 type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;

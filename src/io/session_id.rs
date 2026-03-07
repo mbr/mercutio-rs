@@ -2,15 +2,7 @@
 
 use std::{fmt, num::ParseIntError, str::FromStr};
 
-use axum::{
-    extract::FromRequestParts,
-    http::{StatusCode, header::ToStrError, request::Parts},
-};
-use rand::distr::{Distribution, StandardUniform};
 use thiserror::Error;
-
-/// Header name for the MCP session ID per the spec.
-pub const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Unique identifier for an MCP session.
 ///
@@ -30,7 +22,8 @@ impl McpSessionId {
     }
 }
 
-impl Distribution<McpSessionId> for StandardUniform {
+#[cfg(feature = "rand")]
+impl rand::distr::Distribution<McpSessionId> for rand::distr::StandardUniform {
     fn sample<R: rand::Rng + ?Sized>(&self, rng: &mut R) -> McpSessionId {
         McpSessionId(rng.random())
     }
@@ -60,66 +53,6 @@ impl FromStr for McpSessionId {
         u128::from_str_radix(s, 16)
             .map(McpSessionId)
             .map_err(ParseSessionIdError)
-    }
-}
-
-/// Rejection type when session ID extraction fails.
-#[derive(Debug, Error)]
-pub enum SessionIdRejection {
-    /// The `Mcp-Session-Id` header is missing.
-    #[error("missing session ID header `{SESSION_ID_HEADER}`")]
-    Missing,
-    /// The header value is not valid UTF-8.
-    #[error("session ID header not valid UTF-8")]
-    InvalidUtf8(#[source] ToStrError),
-    /// The header value failed to parse as a session ID.
-    #[error("invalid session ID")]
-    InvalidFormat(#[source] ParseSessionIdError),
-}
-
-impl axum::response::IntoResponse for SessionIdRejection {
-    fn into_response(self) -> axum::response::Response {
-        (StatusCode::BAD_REQUEST, self.to_string()).into_response()
-    }
-}
-
-impl<S> FromRequestParts<S> for McpSessionId
-where
-    S: Send + Sync,
-{
-    type Rejection = SessionIdRejection;
-
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let value = parts
-            .headers
-            .get(SESSION_ID_HEADER)
-            .ok_or(SessionIdRejection::Missing)?;
-
-        let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
-        s.parse().map_err(SessionIdRejection::InvalidFormat)
-    }
-}
-
-/// Extractor for an optional session ID.
-///
-/// Returns `None` if the header is missing, `Some(id)` if valid, or rejects with
-/// [`SessionIdRejection`] if the header is present but malformed.
-#[derive(Clone, Copy, Debug)]
-pub struct OptionalSessionId(pub Option<McpSessionId>);
-
-impl<S> FromRequestParts<S> for OptionalSessionId
-where
-    S: Send + Sync,
-{
-    type Rejection = SessionIdRejection;
-
-    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        if !parts.headers.contains_key(SESSION_ID_HEADER) {
-            return Ok(Self(None));
-        }
-
-        let id = McpSessionId::from_request_parts(parts, state).await?;
-        Ok(Self(Some(id)))
     }
 }
 
@@ -173,6 +106,7 @@ mod tests {
         assert_eq!(original, parsed);
     }
 
+    #[cfg(feature = "rand")]
     #[test]
     fn random_generation() {
         use rand::Rng;

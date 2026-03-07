@@ -12,10 +12,13 @@
 //! The handler traits [`ToolHandler`] and [`MutToolHandler`] are always available for custom
 //! transport implementations.
 
+mod session_id;
+
 use std::future::Future;
 
 use thiserror::Error;
 
+pub use self::session_id::{McpSessionId, ParseSessionIdError};
 use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 
 /// Handles tool invocations in concurrent contexts.

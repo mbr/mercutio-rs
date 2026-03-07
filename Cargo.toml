@@ -10,7 +10,7 @@ documentation = "https://docs.rs/mercutio"
 [features]
 io-stdlib = []
 io-tokio = ["dep:tokio"]
-io-axum = ["dep:axum", "dep:tokio", "dep:rand"]
+io-axum = ["dep:axum", "dep:tokio", "rand"]
 
 [package.metadata.docs.rs]
 all-features = true
