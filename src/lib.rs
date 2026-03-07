@@ -1,85 +1,4 @@
-//! IO-less MCP protocol implementation.
-//!
-//! Implements the server side of the [Model Context Protocol][mcp] (MCP), a [JSON-RPC 2.0][jsonrpc]
-//! based protocol for LLM tool integration. This crate handles protocol logic without performing
-//! any IO: it consumes and produces JSON-RPC messages, leaving transport to the caller. For local
-//! servers, the transport is typically newline-delimited JSON over stdin/stdout; HTTP-based
-//! transports vary by MCP version (SSE with HTTP POST, or the newer streamable HTTP).
-//!
-//! [mcp]: https://modelcontextprotocol.io/specification/versioning
-//! [jsonrpc]: https://www.jsonrpc.org/specification
-//!
-//! In MCP terminology, the *client* is the LLM host application (e.g., an IDE extension or chat
-//! interface) that connects to MCP *servers* to give the model access to tools.
-//!
-//! # Protocol Flow
-//!
-//! State transitions are handled internally. The server proceeds through three states:
-//!
-//! 1. **Initialization**: The client sends an `initialize` request containing its capabilities and
-//!    implementation info. The server responds with its own capabilities, implementation info, and
-//!    optional instructions for the LLM (see [`McpServerBuilder::instructions`]).
-//!
-//! 2. **Initialized notification**: The client sends a `notifications/initialized` notification to
-//!    confirm it received and processed the server's response. This completes the handshake.
-//!
-//! 3. **Ready**: The server can now handle tool requests. Supported methods are `tools/list` to
-//!    enumerate available tools and `tools/call` to invoke a tool. The `ping` method is available
-//!    in all phases for connection health checks.
-//!
-//! The server otherwise rejects requests until the handshake completes; [`McpServer::is_ready`] can be
-//! used to check this, but is not required.
-//!
-//! # Usage
-//!
-//! Create an [`McpServer`] using [`McpServerBuilder`] and feed it
-//! incoming messages in a loop. The server is generic over a [`ToolRegistry`] which defines
-//! the available tools:
-//!
-//! ```ignore
-//! tool_registry! {
-//!     enum MyTools {
-//!         GetWeather("get_weather", "Gets weather for a city") {
-//!             /// City name, e.g. "San Francisco".
-//!             city: String,
-//!         },
-//!     }
-//! }
-//!
-//! let mut server = McpServer::<MyTools>::builder()
-//!     .name("my-server")
-//!     .version("1.0.0")
-//!     .build();
-//!
-//! loop {
-//!     let line = read_line_from_stdin();
-//!     let msg: JsonrpcMessage = parse_line(&line)?;
-//!
-//!     match server.handle(msg) {
-//!         Output::Send(response) => send_to_client(response),
-//!         Output::ToolCall { tool, responder } => {
-//!             let result = match tool {
-//!                 MyTools::GetWeather(input) => {
-//!                     fetch_weather(&input.city).map(|w| format!("{}°C", w.temp))
-//!                 }
-//!             };
-//!             send_to_client(responder.respond(result));
-//!         }
-//!         Output::ProtocolError(e) => break,
-//!         Output::None => {}
-//!     }
-//! }
-//! ```
-//!
-//! For servers without tools, the type parameter can be omitted (defaults to [`NoTools`]):
-//!
-//! ```ignore
-//! let mut server = McpServer::builder()
-//!     .name("my-server")
-//!     .version("1.0.0")
-//!     .build();
-//! ```
-
+#![doc = include_str!("../README.md")]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
@@ -134,6 +53,23 @@ enum Phase {
 ///
 /// Generic over `R: ToolRegistry` which defines the available tools. Defaults to [`NoTools`] for
 /// servers without tools. The registry handles tool parsing and provides type-safe dispatch.
+///
+/// # Protocol Flow
+///
+/// The server proceeds through three phases, with state transitions handled internally:
+///
+/// 1. **Initialization**: The client sends an `initialize` request containing its capabilities and
+///    implementation info. The server responds with its own capabilities, implementation info, and
+///    optional instructions for the LLM (see [`McpServerBuilder::instructions`]).
+///
+/// 2. **Initialized notification**: The client sends a `notifications/initialized` notification to
+///    confirm it received and processed the server's response. This completes the handshake.
+///
+/// 3. **Ready**: The server can now handle tool requests. Supported methods are `tools/list` to
+///    enumerate available tools and `tools/call` to invoke a tool.
+///
+/// The `ping` method is available in all phases for connection health checks. Other requests are
+/// rejected until the handshake completes; [`McpServer::is_ready`] can check this.
 pub struct McpServer<R: ToolRegistry = NoTools> {
     /// Server configuration.
     config: ServerConfig,

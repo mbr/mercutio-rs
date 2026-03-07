@@ -290,8 +290,8 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone, S: SessionStorage<R>> Clone for
 
 /// Builder for creating an MCP router with custom configuration.
 ///
-/// Use [`McpRouter::builder`] to create a builder, then call [`.build()`](Self::build) to get the
-/// axum [`Router`].
+/// Use [`McpRouter::builder`] to create a builder, then call `.build()` to get the axum
+/// [`Router`].
 pub struct McpRouter;
 
 impl McpRouter {

@@ -250,6 +250,9 @@ pub trait ToolRegistry: Sized {
 }
 
 /// Empty tool registry for servers that don't expose tools.
+///
+/// This is the default type parameter for [`McpServer`](crate::McpServer), so the turbofish can
+/// be omitted: `McpServer::builder()` instead of `McpServer::<NoTools>::builder()`.
 #[derive(Debug)]
 pub enum NoTools {}
 
