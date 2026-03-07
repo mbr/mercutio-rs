@@ -28,5 +28,7 @@ axum = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
 
 [dev-dependencies]
-tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["net", "rt", "rt-multi-thread", "macros"] }
 tower = { version = "0.5", features = ["util"] }
