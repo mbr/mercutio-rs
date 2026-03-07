@@ -65,18 +65,15 @@ use tokio::sync::{Mutex, RwLock};
 
 pub use super::{
     ToolHandler,
-    session_id::{McpSessionId, ParseSessionIdError},
+    session_id::{HTTP_SESSION_ID_HEADER, McpSessionId, ParseSessionIdError},
 };
 use crate::{McpServer, McpServerBuilder, Output, ToolRegistry, parse_line};
-
-/// Header name for the MCP session ID per the spec.
-pub const SESSION_ID_HEADER: &str = "mcp-session-id";
 
 /// Rejection type when session ID extraction fails.
 #[derive(Debug, Error)]
 pub enum SessionIdRejection {
     /// The `Mcp-Session-Id` header is missing.
-    #[error("missing session ID header `{SESSION_ID_HEADER}`")]
+    #[error("missing session ID header `{HTTP_SESSION_ID_HEADER}`")]
     Missing,
     /// The header value is not valid UTF-8.
     #[error("session ID header not valid UTF-8")]
@@ -101,7 +98,7 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let value = parts
             .headers
-            .get(SESSION_ID_HEADER)
+            .get(HTTP_SESSION_ID_HEADER)
             .ok_or(SessionIdRejection::Missing)?;
 
         let s = value.to_str().map_err(SessionIdRejection::InvalidUtf8)?;
@@ -123,7 +120,7 @@ where
     type Rejection = SessionIdRejection;
 
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
-        if !parts.headers.contains_key(SESSION_ID_HEADER) {
+        if !parts.headers.contains_key(HTTP_SESSION_ID_HEADER) {
             return Ok(Self(None));
         }
 
@@ -280,7 +277,7 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Resp
         .into_response();
 
     let value = HeaderValue::from_str(&session_id.to_string()).expect("hex is valid header");
-    response.headers_mut().insert(SESSION_ID_HEADER, value);
+    response.headers_mut().insert(HTTP_SESSION_ID_HEADER, value);
 
     response
 }
@@ -309,7 +306,7 @@ mod tests {
     };
     use tower::util::ServiceExt;
 
-    use super::{SESSION_ID_HEADER, mcp_router};
+    use super::{HTTP_SESSION_ID_HEADER, mcp_router};
     use crate::{McpServer, McpServerBuilder, NoTools};
 
     fn test_builder() -> McpServerBuilder<NoTools> {
@@ -341,11 +338,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().contains_key(SESSION_ID_HEADER));
+        assert!(response.headers().contains_key(HTTP_SESSION_ID_HEADER));
 
         let session_id = response
             .headers()
-            .get(SESSION_ID_HEADER)
+            .get(HTTP_SESSION_ID_HEADER)
             .unwrap()
             .to_str()
             .unwrap();
@@ -373,7 +370,7 @@ mod tests {
 
         let session_id = init_response
             .headers()
-            .get(SESSION_ID_HEADER)
+            .get(HTTP_SESSION_ID_HEADER)
             .unwrap()
             .to_str()
             .unwrap()
@@ -388,7 +385,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("content-type", "application/json")
-                    .header(SESSION_ID_HEADER, &session_id)
+                    .header(HTTP_SESSION_ID_HEADER, &session_id)
                     .body(Body::from(initialized_body))
                     .unwrap(),
             )
@@ -405,7 +402,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("content-type", "application/json")
-                    .header(SESSION_ID_HEADER, &session_id)
+                    .header(HTTP_SESSION_ID_HEADER, &session_id)
                     .body(Body::from(ping_body))
                     .unwrap(),
             )
@@ -427,7 +424,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("content-type", "application/json")
-                    .header(SESSION_ID_HEADER, "00000000000000000000000000000000")
+                    .header(HTTP_SESSION_ID_HEADER, "00000000000000000000000000000000")
                     .body(Body::from(body))
                     .unwrap(),
             )
@@ -458,7 +455,7 @@ mod tests {
 
         let session_id = init_response
             .headers()
-            .get(SESSION_ID_HEADER)
+            .get(HTTP_SESSION_ID_HEADER)
             .unwrap()
             .to_str()
             .unwrap()
@@ -470,7 +467,7 @@ mod tests {
                 Request::builder()
                     .method("DELETE")
                     .uri("/")
-                    .header(SESSION_ID_HEADER, &session_id)
+                    .header(HTTP_SESSION_ID_HEADER, &session_id)
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -487,7 +484,7 @@ mod tests {
                     .method("POST")
                     .uri("/")
                     .header("content-type", "application/json")
-                    .header(SESSION_ID_HEADER, &session_id)
+                    .header(HTTP_SESSION_ID_HEADER, &session_id)
                     .body(Body::from(ping_body))
                     .unwrap(),
             )

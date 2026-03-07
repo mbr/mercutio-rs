@@ -18,7 +18,7 @@ use std::future::Future;
 
 use thiserror::Error;
 
-pub use self::session_id::{McpSessionId, ParseSessionIdError};
+pub use self::session_id::{HTTP_SESSION_ID_HEADER, McpSessionId, ParseSessionIdError};
 use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 
 /// Handles tool invocations in concurrent contexts.

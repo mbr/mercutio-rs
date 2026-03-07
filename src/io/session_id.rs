@@ -4,6 +4,9 @@ use std::{fmt, num::ParseIntError, str::FromStr};
 
 use thiserror::Error;
 
+/// HTTP header name for the MCP session ID per the spec.
+pub const HTTP_SESSION_ID_HEADER: &str = "mcp-session-id";
+
 /// Unique identifier for an MCP session.
 ///
 /// Wraps a 128-bit random value, displayed as lowercase hex.
