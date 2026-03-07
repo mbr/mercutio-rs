@@ -8,7 +8,7 @@ This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run i
 
 Use `tool_registry!` to define your tools. Field doc comments become JSON Schema descriptions that the LLM sees:
 
-```rust
+```rust,no_run
 mercutio::tool_registry! {
     enum MyTools {
         GetWeather("get_weather", "Gets current weather for a city") {
@@ -29,7 +29,7 @@ mercutio::tool_registry! {
 
 The core API is a state machine. Pass in parsed messages, match on the output:
 
-```rust
+```rust,ignore
 use mercutio::{McpServer, Output};
 
 let mut server = McpServer::<MyTools>::builder()
@@ -60,7 +60,7 @@ loop {
 
 If you'd rather not wire up I/O yourself, the `io-*` feature flags provide ready-made transports. These use handler traits to process tool calls:
 
-```rust
+```rust,ignore
 use mercutio::{ToolOutput, io::{McpSessionId, ToolHandler}};
 
 struct MyHandler;
@@ -91,7 +91,7 @@ impl ToolHandler<MyTools> for MyHandler {
 
 Async stdin/stdout using Tokio:
 
-```rust
+```rust,ignore
 let server = McpServer::<MyTools>::builder().name("my-server").version("1.0").build();
 mercutio::io::tokio::run_stdio(server, MyHandler).await?;
 ```
@@ -100,7 +100,7 @@ mercutio::io::tokio::run_stdio(server, MyHandler).await?;
 
 Synchronous stdin/stdout (no async runtime):
 
-```rust
+```rust,ignore
 let server = McpServer::<MyTools>::builder().name("my-server").version("1.0").build();
 mercutio::io::stdlib::run_stdio(server, |_session_id, tool| handle_tool(tool))?;
 ```
@@ -109,7 +109,7 @@ mercutio::io::stdlib::run_stdio(server, |_session_id, tool| handle_tool(tool))?;
 
 HTTP transport with session management:
 
-```rust
+```rust,ignore
 let mut builder = McpServer::<MyTools>::builder();
 builder.name("my-server").version("1.0");
 
@@ -123,7 +123,7 @@ For custom session storage, use `McpRouter::builder()` with `.storage()`.
 
 A complete server supporting both transports:
 
-```rust
+```rust,ignore
 use clap::{Parser, Subcommand};
 use mercutio::{McpServer, ToolOutput, io::{McpSessionId, ToolHandler}};
 
