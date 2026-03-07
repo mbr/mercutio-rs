@@ -21,7 +21,7 @@
 //!         .version("1.0.0")
 //!         .build();
 //!
-//!     run_stdio(server, |tool| -> Result<String, Infallible> {
+//!     run_stdio(server, |_session_id, tool| -> Result<String, Infallible> {
 //!         match tool {
 //!             MyTools::GetWeather(input) => {
 //!                 Ok(format!("Weather in {}: sunny", input.city))
@@ -34,6 +34,7 @@
 use std::io::{BufRead, BufReader, Write};
 
 pub use super::IoError;
+use super::McpSessionId;
 use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout.
@@ -51,7 +52,7 @@ where
     R: ToolRegistry,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
-    H: FnMut(R) -> Result<T, E>,
+    H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
 {
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
@@ -72,7 +73,7 @@ where
     R: ToolRegistry,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
-    H: FnMut(R) -> Result<T, E>,
+    H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
     I: BufRead,
     O: Write,
 {
@@ -92,7 +93,7 @@ where
                 write_message(&mut output, response)?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = responder.respond(handler(tool).map(Into::into));
+                let response = responder.respond(handler(None, tool).map(Into::into));
                 write_message(&mut output, response)?;
             }
             Output::ProtocolError(e) => {
@@ -135,7 +136,9 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_, _: NoTools| -> Result<String, std::convert::Infallible> {
+                unreachable!("no tools")
+            },
         );
 
         assert!(result.is_ok());
@@ -161,7 +164,9 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_, _: NoTools| -> Result<String, std::convert::Infallible> {
+                unreachable!("no tools")
+            },
         );
 
         assert!(matches!(result, Err(IoError::Parse(_))));
@@ -177,7 +182,9 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| -> Result<String, std::convert::Infallible> { unreachable!("no tools") },
+            |_, _: NoTools| -> Result<String, std::convert::Infallible> {
+                unreachable!("no tools")
+            },
         );
 
         assert!(matches!(result, Err(IoError::Protocol(_))));

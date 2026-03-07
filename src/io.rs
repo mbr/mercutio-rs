@@ -23,27 +23,31 @@ use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 
 /// Handles tool invocations in concurrent contexts.
 ///
-/// Blanket impl for `Fn(R) -> impl Future<Output = Result<T, E>>`.
+/// Blanket impl for `Fn(Option<McpSessionId>, R) -> impl Future<Output = Result<T, E>>`.
 pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
     /// Error type returned by the handler.
     type Error: std::fmt::Display;
 
     /// Handles a tool invocation and returns the result.
-    fn handle(&self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
+    fn handle(
+        &self,
+        session_id: Option<McpSessionId>,
+        tool: R,
+    ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
 }
 
 impl<R, F, Fut, T, E> ToolHandler<R> for F
 where
     R: ToolRegistry + Send,
-    F: Fn(R) -> Fut + Send + Sync,
+    F: Fn(Option<McpSessionId>, R) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, E>> + Send,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
 {
     type Error = E;
 
-    async fn handle(&self, tool: R) -> Result<ToolOutput, E> {
-        self(tool).await.map(Into::into)
+    async fn handle(&self, session_id: Option<McpSessionId>, tool: R) -> Result<ToolOutput, E> {
+        self(session_id, tool).await.map(Into::into)
     }
 }
 
@@ -55,15 +59,23 @@ pub trait MutToolHandler<R: ToolRegistry> {
     type Error: std::fmt::Display;
 
     /// Handles a tool invocation and returns the result.
-    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
+    fn handle(
+        &mut self,
+        session_id: Option<McpSessionId>,
+        tool: R,
+    ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
 }
 
 /// Every [`ToolHandler`] is automatically a [`MutToolHandler`].
 impl<R: ToolRegistry, T: ToolHandler<R>> MutToolHandler<R> for T {
     type Error = <T as ToolHandler<R>>::Error;
 
-    fn handle(&mut self, tool: R) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send {
-        ToolHandler::handle(self, tool)
+    fn handle(
+        &mut self,
+        session_id: Option<McpSessionId>,
+        tool: R,
+    ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send {
+        ToolHandler::handle(self, session_id, tool)
     }
 }
 

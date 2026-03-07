@@ -20,7 +20,7 @@
 //! let mut builder = McpServer::<MyTools>::builder();
 //! builder.name("my-server").version("1.0.0");
 //!
-//! let router = mcp_router(builder, |tool: MyTools| async move {
+//! let router = mcp_router(builder, |_session_id, tool: MyTools| async move {
 //!     match tool {
 //!         MyTools::GetWeather(input) => {
 //!             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
@@ -246,7 +246,7 @@ where
     match output {
         Output::Send(msg) => json_response(&msg, session_id),
         Output::ToolCall { tool, responder } => {
-            let result = state.handler.handle(tool).await;
+            let result = state.handler.handle(Some(session_id), tool).await;
             json_response(&responder.respond(result), session_id)
         }
         Output::None => StatusCode::ACCEPTED.into_response(),
@@ -321,7 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn initialize_creates_session() {
-        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -351,7 +351,7 @@ mod tests {
 
     #[tokio::test]
     async fn subsequent_request_requires_session() {
-        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
         let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -414,7 +414,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_session_returns_404() {
-        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
         let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
 
@@ -436,7 +436,7 @@ mod tests {
 
     #[tokio::test]
     async fn delete_removes_session() {
-        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
         let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
@@ -496,7 +496,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_returns_405() {
-        let router = mcp_router(test_builder(), |t| async { test_handler(t) });
+        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
         let response = router
             .oneshot(

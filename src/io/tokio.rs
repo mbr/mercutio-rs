@@ -22,7 +22,11 @@
 //! impl MutToolHandler<MyTools> for Handler {
 //!     type Error = Infallible;
 //!
-//!     async fn handle(&mut self, tool: MyTools) -> Result<ToolOutput, Self::Error> {
+//!     async fn handle(
+//!         &mut self,
+//!         _session_id: Option<mercutio::io::McpSessionId>,
+//!         tool: MyTools,
+//!     ) -> Result<ToolOutput, Self::Error> {
 //!         self.request_count += 1;
 //!         match tool {
 //!             MyTools::GetWeather(input) => {
@@ -105,7 +109,7 @@ where
                 write_message(&mut output, response).await?;
             }
             Output::ToolCall { tool, responder } => {
-                let response = responder.respond(handler.handle(tool).await);
+                let response = responder.respond(handler.handle(None, tool).await);
                 write_message(&mut output, response).await?;
             }
             Output::ProtocolError(e) => {
@@ -152,7 +156,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
+            |_, _: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 
@@ -179,7 +183,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
+            |_, _: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 
@@ -196,7 +200,7 @@ mod tests {
             Cursor::new(input),
             &mut output,
             test_server(),
-            |_: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
+            |_, _: NoTools| async { Ok::<_, std::convert::Infallible>(String::new()) },
         )
         .await;
 
