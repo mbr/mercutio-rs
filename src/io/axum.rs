@@ -66,7 +66,6 @@ use axum::{
 };
 use rand::Rng;
 use thiserror::Error;
-use tokio::sync::Mutex;
 
 pub use super::{
     ToolHandler,
@@ -263,26 +262,94 @@ impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStor
     }
 }
 
-/// Type alias for the session storage map.
-type SessionMap<R> = Arc<tokio::sync::RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;
+/// Default capacity for [`InMemoryStorage`].
+pub const DEFAULT_CAPACITY: usize = 10_000;
+
+/// Default minimum eviction age for [`InMemoryStorage`].
+pub const DEFAULT_MIN_EVICTION_AGE: Duration = Duration::from_secs(120);
 
 /// Shared state for axum handlers.
-struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
+struct AppState<R: ToolRegistry, H: ToolHandler<R>, S: SessionStorage<R>> {
     /// Builder for creating new server instances.
     builder: Arc<McpServerBuilder<R>>,
-    /// Session storage holding one [`McpServer`] per active session.
-    sessions: SessionMap<R>,
-    /// Handler for tool invocations, called when `Output::ToolCall` is returned.
+    /// Session storage.
+    storage: Arc<S>,
+    /// Handler for tool invocations.
     handler: H,
 }
 
-impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
+impl<R: ToolRegistry, H: ToolHandler<R> + Clone, S: SessionStorage<R>> Clone for AppState<R, H, S> {
     fn clone(&self) -> Self {
         Self {
             builder: Arc::clone(&self.builder),
-            sessions: Arc::clone(&self.sessions),
+            storage: Arc::clone(&self.storage),
             handler: self.handler.clone(),
         }
+    }
+}
+
+/// Builder for creating an MCP router with custom configuration.
+///
+/// Use [`McpRouter::builder`] to create a builder, then call [`.build()`](Self::build) to get the
+/// axum [`Router`].
+pub struct McpRouter;
+
+impl McpRouter {
+    /// Creates a builder with the required server builder and handler.
+    pub fn builder<R, H>(
+        builder: McpServerBuilder<R>,
+        handler: H,
+    ) -> McpRouterBuilder<R, H, InMemoryStorage<R>>
+    where
+        R: ToolRegistry + Send + Sync + 'static,
+        H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    {
+        McpRouterBuilder {
+            builder,
+            handler,
+            storage: InMemoryStorage::new(DEFAULT_CAPACITY, DEFAULT_MIN_EVICTION_AGE),
+        }
+    }
+}
+
+/// Builder for configuring an MCP router.
+pub struct McpRouterBuilder<R: ToolRegistry, H, S> {
+    /// Builder for creating new server instances.
+    builder: McpServerBuilder<R>,
+    /// Handler for tool invocations.
+    handler: H,
+    /// Session storage.
+    storage: S,
+}
+
+impl<R, H, S> McpRouterBuilder<R, H, S>
+where
+    R: ToolRegistry + Send + Sync + 'static,
+    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    S: SessionStorage<R>,
+{
+    /// Sets a custom session storage implementation.
+    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2> {
+        McpRouterBuilder {
+            builder: self.builder,
+            handler: self.handler,
+            storage,
+        }
+    }
+
+    /// Builds the axum [`Router`].
+    pub fn build(self) -> Router {
+        let state = AppState {
+            builder: Arc::new(self.builder),
+            storage: Arc::new(self.storage),
+            handler: self.handler,
+        };
+
+        Router::new()
+            .route("/", post(handle_post::<R, H, S>))
+            .route("/", get(handle_get))
+            .route("/", delete(handle_delete::<R, H, S>))
+            .with_state(state)
     }
 }
 
@@ -291,34 +358,26 @@ impl<R: ToolRegistry, H: ToolHandler<R> + Clone> Clone for AppState<R, H> {
 /// Returns a router handling `POST /` for client messages and `DELETE /` for session termination.
 /// See the [module documentation](self) for a complete example.
 ///
-/// Session storage is managed internally and not exposed. Sessions are lost on server restart.
+/// Uses [`InMemoryStorage`] with [`DEFAULT_CAPACITY`] and [`DEFAULT_MIN_EVICTION_AGE`]. For
+/// custom storage, use [`McpRouter::builder`].
 pub fn mcp_router<R, H>(builder: McpServerBuilder<R>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
 {
-    let state = AppState {
-        builder: Arc::new(builder),
-        sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-        handler,
-    };
-
-    Router::new()
-        .route("/", post(handle_post::<R, H>))
-        .route("/", get(handle_get))
-        .route("/", delete(handle_delete::<R, H>))
-        .with_state(state)
+    McpRouter::builder(builder, handler).build()
 }
 
 /// Handles POST requests (client messages).
-async fn handle_post<R, H>(
-    State(state): State<AppState<R, H>>,
+async fn handle_post<R, H, S>(
+    State(state): State<AppState<R, H, S>>,
     OptionalSessionId(session_id): OptionalSessionId,
     body: Bytes,
 ) -> Response
 where
-    R: ToolRegistry + Send + 'static,
+    R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    S: SessionStorage<R>,
 {
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s,
@@ -334,15 +393,16 @@ where
 
     let session_id = match session_id {
         Some(id) => id,
-        None => {
-            let id: McpSessionId = rand::rng().random();
-            state
-                .sessions
-                .write()
-                .await
-                .insert(id, Mutex::new(state.builder.build()));
-            id
-        }
+        None => match state.storage.create(state.builder.build()).await {
+            Ok(id) => id,
+            Err(e) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!("storage error: {e}"),
+                )
+                    .into_response();
+            }
+        },
     };
 
     handle_session(&state, session_id, msg).await
@@ -356,25 +416,34 @@ async fn handle_get() -> Response {
 }
 
 /// Handles a message for a session.
-async fn handle_session<R, H>(
-    state: &AppState<R, H>,
+async fn handle_session<R, H, S>(
+    state: &AppState<R, H, S>,
     session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
 ) -> Response
 where
-    R: ToolRegistry + Send + 'static,
+    R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    S: SessionStorage<R>,
 {
-    let sessions = state.sessions.read().await;
-    let Some(server_mutex) = sessions.get(&session_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let output = match state
+        .storage
+        .with_session(session_id, |server| server.handle(msg))
+        .await
+    {
+        Ok(Some(output)) => output,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("storage error: {e}"),
+            )
+                .into_response();
+        }
     };
 
-    let output = server_mutex.lock().await.handle(msg);
-    drop(sessions);
-
     if matches!(&output, Output::ProtocolError(_)) {
-        state.sessions.write().await.remove(&session_id);
+        state.storage.remove(session_id).await;
     }
 
     match output {
@@ -417,15 +486,16 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Resp
 }
 
 /// Handles DELETE requests (session termination).
-async fn handle_delete<R, H>(
-    State(state): State<AppState<R, H>>,
+async fn handle_delete<R, H, S>(
+    State(state): State<AppState<R, H, S>>,
     session_id: McpSessionId,
 ) -> Response
 where
-    R: ToolRegistry + Send + 'static,
+    R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    S: SessionStorage<R>,
 {
-    if state.sessions.write().await.remove(&session_id).is_some() {
+    if state.storage.remove(session_id).await {
         StatusCode::NO_CONTENT.into_response()
     } else {
         StatusCode::NOT_FOUND.into_response()
