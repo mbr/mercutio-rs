@@ -124,7 +124,7 @@ For custom session storage, use `McpRouter::builder()` with `.storage()`.
 A complete server supporting both transports:
 
 ```rust
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use mercutio::{McpServer, ToolOutput, io::{McpSessionId, ToolHandler}};
 
 mercutio::tool_registry! {
@@ -147,8 +147,14 @@ impl ToolHandler<MyTools> for MyHandler {
 
 #[derive(Parser)]
 struct Args {
-    #[arg(long)]
-    http: bool,
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    Mcp,
+    McpHttp { bind: std::net::SocketAddr },
 }
 
 #[tokio::main]
@@ -157,12 +163,15 @@ async fn main() -> anyhow::Result<()> {
     let mut builder = McpServer::<MyTools>::builder();
     builder.name("greeter").version("1.0");
 
-    if args.http {
-        let router = mercutio::io::axum::mcp_router(builder, MyHandler);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:3000").await?;
-        axum::serve(listener, router).await?;
-    } else {
-        mercutio::io::tokio::run_stdio(builder.build(), MyHandler).await?;
+    match args.command {
+        Command::Mcp => {
+            mercutio::io::tokio::run_stdio(builder.build(), MyHandler).await?;
+        }
+        Command::McpHttp { bind } => {
+            let router = mercutio::io::axum::mcp_router(builder, MyHandler);
+            let listener = tokio::net::TcpListener::bind(bind).await?;
+            axum::serve(listener, router).await?;
+        }
     }
     Ok(())
 }
