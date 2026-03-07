@@ -49,7 +49,12 @@
 //! - No batch requests (JSON-RPC arrays)
 //! - No session persistence across server restarts
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::HashMap,
+    future::Future,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     Router,
@@ -129,8 +134,133 @@ where
     }
 }
 
+/// Manages session lifecycle for the HTTP transport.
+///
+/// Implementations handle session creation, access, and removal.
+pub trait SessionStorage<R: ToolRegistry>: Send + Sync + 'static {
+    /// Error type for storage operations.
+    type Error: std::fmt::Display + Send;
+
+    /// Creates a new session with the given server, returning its ID.
+    fn create(
+        &self,
+        server: McpServer<R>,
+    ) -> impl Future<Output = Result<McpSessionId, Self::Error>> + Send;
+
+    /// Calls a function with exclusive access to a session's server.
+    ///
+    /// Returns `Ok(None)` if the session does not exist, `Ok(Some(result))` on success.
+    fn with_session<T: Send>(
+        &self,
+        id: McpSessionId,
+        f: impl FnOnce(&mut McpServer<R>) -> T + Send,
+    ) -> impl Future<Output = Result<Option<T>, Self::Error>> + Send;
+
+    /// Removes a session, returning `true` if it existed.
+    fn remove(&self, id: McpSessionId) -> impl Future<Output = bool> + Send;
+}
+
+/// Error from [`InMemoryStorage`] operations.
+#[derive(Clone, Copy, Debug, Error)]
+pub enum InMemoryStorageError {
+    /// Storage is at capacity and no sessions are old enough to evict.
+    #[error("session storage at capacity")]
+    AtCapacity,
+}
+
+/// Entry in the in-memory session storage.
+struct SessionEntry<R: ToolRegistry> {
+    /// The MCP server instance for this session.
+    server: McpServer<R>,
+    /// When this session was last accessed.
+    last_accessed: Instant,
+}
+
+/// In-memory session storage with LRU eviction.
+///
+/// Stores sessions in memory with a configurable capacity limit. When full, evicts the
+/// least-recently-used session that is older than the minimum eviction age. If no sessions
+/// qualify for eviction, returns [`InMemoryStorageError::AtCapacity`].
+pub struct InMemoryStorage<R: ToolRegistry> {
+    /// Session entries keyed by session ID.
+    sessions: RwLock<HashMap<McpSessionId, SessionEntry<R>>>,
+    /// Maximum number of sessions to store.
+    capacity: usize,
+    /// Minimum age before a session can be evicted.
+    min_eviction_age: Duration,
+}
+
+impl<R: ToolRegistry> InMemoryStorage<R> {
+    /// Creates a new in-memory storage with the given capacity and minimum eviction age.
+    ///
+    /// Sessions younger than `min_eviction_age` will not be evicted even when at capacity,
+    /// causing [`InMemoryStorageError::AtCapacity`] errors instead.
+    pub fn new(capacity: usize, min_eviction_age: Duration) -> Self {
+        Self {
+            sessions: RwLock::new(HashMap::new()),
+            capacity,
+            min_eviction_age,
+        }
+    }
+}
+
+impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStorage<R> {
+    type Error = InMemoryStorageError;
+
+    async fn create(&self, server: McpServer<R>) -> Result<McpSessionId, Self::Error> {
+        let id: McpSessionId = rand::rng().random();
+        let now = Instant::now();
+
+        let mut sessions = self.sessions.write().await;
+
+        if sessions.len() >= self.capacity {
+            let eviction_threshold = now - self.min_eviction_age;
+            let oldest = sessions
+                .iter()
+                .filter(|(_, entry)| entry.last_accessed < eviction_threshold)
+                .min_by_key(|(_, entry)| entry.last_accessed)
+                .map(|(id, _)| *id);
+
+            match oldest {
+                Some(oldest_id) => {
+                    sessions.remove(&oldest_id);
+                }
+                None => return Err(InMemoryStorageError::AtCapacity),
+            }
+        }
+
+        sessions.insert(
+            id,
+            SessionEntry {
+                server,
+                last_accessed: now,
+            },
+        );
+
+        Ok(id)
+    }
+
+    async fn with_session<T: Send>(
+        &self,
+        id: McpSessionId,
+        f: impl FnOnce(&mut McpServer<R>) -> T + Send,
+    ) -> Result<Option<T>, Self::Error> {
+        let mut sessions = self.sessions.write().await;
+        let Some(entry) = sessions.get_mut(&id) else {
+            return Ok(None);
+        };
+
+        entry.last_accessed = Instant::now();
+        Ok(Some(f(&mut entry.server)))
+    }
+
+    async fn remove(&self, id: McpSessionId) -> bool {
+        self.sessions.write().await.remove(&id).is_some()
+    }
+}
+
 /// Type alias for the session storage map.
-type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;
+type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, tokio::sync::Mutex<McpServer<R>>>>>;
 
 /// Shared state for axum handlers.
 struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
@@ -510,5 +640,80 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+
+    mod storage {
+        use std::time::Duration;
+
+        use super::*;
+        use crate::io::{
+            McpSessionId,
+            axum::{InMemoryStorage, InMemoryStorageError, SessionStorage},
+        };
+
+        #[tokio::test]
+        async fn create_and_access_session() {
+            let storage = InMemoryStorage::new(10, Duration::from_secs(0));
+            let server = test_builder().build();
+
+            let id = storage.create(server).await.unwrap();
+
+            let result = storage
+                .with_session(id, |_server| "accessed")
+                .await
+                .unwrap();
+            assert_eq!(result, Some("accessed"));
+        }
+
+        #[tokio::test]
+        async fn missing_session_returns_none() {
+            let storage: InMemoryStorage<NoTools> =
+                InMemoryStorage::new(10, Duration::from_secs(0));
+            let fake_id = McpSessionId::from_raw(12345);
+
+            let result = storage
+                .with_session(fake_id, |_server| "accessed")
+                .await
+                .unwrap();
+            assert_eq!(result, None);
+        }
+
+        #[tokio::test]
+        async fn remove_session() {
+            let storage = InMemoryStorage::new(10, Duration::from_secs(0));
+            let server = test_builder().build();
+
+            let id = storage.create(server).await.unwrap();
+            assert!(storage.remove(id).await);
+            assert!(!storage.remove(id).await);
+        }
+
+        #[tokio::test]
+        async fn evicts_oldest_when_at_capacity() {
+            let storage = InMemoryStorage::new(2, Duration::from_secs(0));
+
+            let id1 = storage.create(test_builder().build()).await.unwrap();
+            let id2 = storage.create(test_builder().build()).await.unwrap();
+            let id3 = storage.create(test_builder().build()).await.unwrap();
+
+            let r1 = storage.with_session(id1, |_| ()).await.unwrap();
+            let r2 = storage.with_session(id2, |_| ()).await.unwrap();
+            let r3 = storage.with_session(id3, |_| ()).await.unwrap();
+
+            assert!(r1.is_none(), "oldest session should be evicted");
+            assert!(r2.is_some());
+            assert!(r3.is_some());
+        }
+
+        #[tokio::test]
+        async fn at_capacity_when_sessions_too_young() {
+            let storage = InMemoryStorage::new(2, Duration::from_secs(60));
+
+            storage.create(test_builder().build()).await.unwrap();
+            storage.create(test_builder().build()).await.unwrap();
+
+            let result = storage.create(test_builder().build()).await;
+            assert!(matches!(result, Err(InMemoryStorageError::AtCapacity)));
+        }
     }
 }
