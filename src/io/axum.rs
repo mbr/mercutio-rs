@@ -52,7 +52,7 @@
 use std::{
     collections::HashMap,
     future::Future,
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -66,7 +66,7 @@ use axum::{
 };
 use rand::Rng;
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::Mutex;
 
 pub use super::{
     ToolHandler,
@@ -211,7 +211,7 @@ impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStor
         let id: McpSessionId = rand::rng().random();
         let now = Instant::now();
 
-        let mut sessions = self.sessions.write().await;
+        let mut sessions = self.sessions.write().expect("lock poisoned");
 
         if sessions.len() >= self.capacity {
             let eviction_threshold = now - self.min_eviction_age;
@@ -245,7 +245,7 @@ impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStor
         id: McpSessionId,
         f: impl FnOnce(&mut McpServer<R>) -> T + Send,
     ) -> Result<Option<T>, Self::Error> {
-        let mut sessions = self.sessions.write().await;
+        let mut sessions = self.sessions.write().expect("lock poisoned");
         let Some(entry) = sessions.get_mut(&id) else {
             return Ok(None);
         };
@@ -255,12 +255,16 @@ impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStor
     }
 
     async fn remove(&self, id: McpSessionId) -> bool {
-        self.sessions.write().await.remove(&id).is_some()
+        self.sessions
+            .write()
+            .expect("lock poisoned")
+            .remove(&id)
+            .is_some()
     }
 }
 
 /// Type alias for the session storage map.
-type SessionMap<R> = Arc<RwLock<HashMap<McpSessionId, tokio::sync::Mutex<McpServer<R>>>>>;
+type SessionMap<R> = Arc<tokio::sync::RwLock<HashMap<McpSessionId, Mutex<McpServer<R>>>>>;
 
 /// Shared state for axum handlers.
 struct AppState<R: ToolRegistry, H: ToolHandler<R>> {
@@ -295,7 +299,7 @@ where
 {
     let state = AppState {
         builder: Arc::new(builder),
-        sessions: Arc::new(RwLock::new(HashMap::new())),
+        sessions: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         handler,
     };
 
