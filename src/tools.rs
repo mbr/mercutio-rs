@@ -164,6 +164,7 @@ where
 }
 
 /// MCP tool definition for `tools/list` responses.
+#[derive(Debug)]
 pub struct ToolDefinition {
     /// Tool name.
     pub name: String,
