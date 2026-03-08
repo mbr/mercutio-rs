@@ -18,10 +18,10 @@
 //! Ok(ToolOutput::json(&WeatherData { temp, conditions }))
 //! ```
 //!
-//! # Inspecting Tool Definitions
+//! # Snapshot Testing
 //!
-//! Use [`ToolDefinitions`] to see exactly what the LLM receives when it queries available tools.
-//! This is useful for debugging and snapshot testing with `insta`:
+//! Both [`ToolDefinitions`] and [`ToolOutput`] implement [`Display`] for snapshot testing with
+//! `insta`. Use this to verify tool schemas and outputs:
 //!
 //! ```ignore
 //! #[test]
@@ -31,6 +31,16 @@
 //!
 //!     ## get_weather
 //!     ...
+//!     ");
+//! }
+//!
+//! #[test]
+//! fn weather_output_format() {
+//!     let output = get_weather("Berlin").await?;
+//!     insta::assert_snapshot!(output.to_string(), @r"
+//!     Temperature: 72F
+//!
+//!     Conditions: Sunny
 //!     ");
 //! }
 //! ```
@@ -96,6 +106,23 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 /// Ok(ToolOutput::new()
 ///     .text("Query results:")
 ///     .text(format!("Found {} matches", results.len())))
+/// ```
+///
+/// # Snapshot Testing
+///
+/// `ToolOutput` implements [`Display`] for snapshot testing with `insta`. This renders text
+/// blocks directly and shows placeholders for binary content (images, audio, embedded resources):
+///
+/// ```ignore
+/// #[test]
+/// fn weather_tool_output() {
+///     let output = get_weather_handler(input).await?;
+///     insta::assert_snapshot!(output.to_string(), @r"
+///     Temperature: 72F
+///
+///     Conditions: Sunny
+///     ");
+/// }
 /// ```
 #[derive(Debug, Default)]
 pub struct ToolOutput {
