@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::ops::Index;
 
 use rust_mcp_schema::{CallToolResult, ContentBlock, ToolInputSchema};
 use serde::Serialize;
@@ -250,6 +251,86 @@ impl fmt::Display for ToolDefinition {
     }
 }
 
+/// Collection of tool definitions returned by [`ToolRegistry::definitions`].
+///
+/// Implements [`Display`] to render all tools as a human-readable document, useful for debugging
+/// and snapshot testing with tools like `insta`.
+///
+/// # Example
+///
+/// ```ignore
+/// use mercutio::ToolRegistry;
+///
+/// // Snapshot test your MCP server's tool definitions:
+/// insta::assert_snapshot!(MyTools::definitions().to_string());
+/// ```
+#[derive(Debug)]
+pub struct ToolDefinitions(Vec<ToolDefinition>);
+
+impl ToolDefinitions {
+    /// Creates a new collection from a vector of definitions.
+    pub fn new(definitions: Vec<ToolDefinition>) -> Self {
+        Self(definitions)
+    }
+
+    /// Returns the number of tool definitions.
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Returns true if there are no tool definitions.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns an iterator over the tool definitions.
+    pub fn iter(&self) -> impl Iterator<Item = &ToolDefinition> {
+        self.0.iter()
+    }
+}
+
+impl Index<usize> for ToolDefinitions {
+    type Output = ToolDefinition;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.0[index]
+    }
+}
+
+impl IntoIterator for ToolDefinitions {
+    type Item = ToolDefinition;
+    type IntoIter = std::vec::IntoIter<ToolDefinition>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.into_iter()
+    }
+}
+
+impl<'a> IntoIterator for &'a ToolDefinitions {
+    type Item = &'a ToolDefinition;
+    type IntoIter = std::slice::Iter<'a, ToolDefinition>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.0.iter()
+    }
+}
+
+impl fmt::Display for ToolDefinitions {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "# Tools")?;
+        writeln!(f)?;
+
+        for (i, def) in self.0.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+            }
+            write!(f, "{def}")?;
+        }
+
+        Ok(())
+    }
+}
+
 /// Converts a schemars JSON Schema to MCP's [`ToolInputSchema`].
 ///
 /// MCP tools use standard JSON Schema for `inputSchema`. We use `schemars` to derive schemas from
@@ -296,7 +377,7 @@ pub trait ToolRegistry: Sized {
     fn parse(name: &str, arguments: serde_json::Value) -> std::result::Result<Self, JsonRpcError>;
 
     /// Returns tool definitions for `tools/list`.
-    fn definitions() -> Vec<ToolDefinition>;
+    fn definitions() -> ToolDefinitions;
 }
 
 /// Empty tool registry for servers that don't expose tools.
@@ -315,8 +396,8 @@ impl ToolRegistry for NoTools {
         })
     }
 
-    fn definitions() -> Vec<ToolDefinition> {
-        vec![]
+    fn definitions() -> ToolDefinitions {
+        ToolDefinitions::new(vec![])
     }
 }
 
@@ -420,12 +501,12 @@ macro_rules! tool_registry {
                 }
             }
 
-            fn definitions() -> Vec<$crate::ToolDefinition> {
-                vec![
+            fn definitions() -> $crate::ToolDefinitions {
+                $crate::ToolDefinitions::new(vec![
                     $(
                         $crate::ToolDefinition::from_tool::<$variant>(),
                     )*
-                ]
+                ])
             }
         }
     };
@@ -600,6 +681,61 @@ mod tests {
             The city to look up.
           units (any, optional)
             Temperature unit preference.
+        ");
+    }
+
+    #[test]
+    fn tool_definitions_display() {
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct GetWeather {
+            /// City or address to look up.
+            location: String,
+        }
+
+        impl super::ToolDef for GetWeather {
+            const NAME: &'static str = "get_weather";
+            const DESCRIPTION: &'static str = "Gets weather for a location";
+        }
+
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct SetReminder {
+            /// Reminder message.
+            message: String,
+            /// Minutes from now.
+            delay_minutes: u32,
+        }
+
+        impl super::ToolDef for SetReminder {
+            const NAME: &'static str = "set_reminder";
+            const DESCRIPTION: &'static str = "Sets a reminder";
+        }
+
+        let defs = super::ToolDefinitions::new(vec![
+            ToolDefinition::from_tool::<GetWeather>(),
+            ToolDefinition::from_tool::<SetReminder>(),
+        ]);
+        insta::assert_snapshot!(defs.to_string(), @r"
+        # Tools
+
+        ## get_weather
+
+        Gets weather for a location
+
+        Parameters:
+          location (string, required)
+            City or address to look up.
+
+        ## set_reminder
+
+        Sets a reminder
+
+        Parameters:
+          delay_minutes (integer, required)
+            Minutes from now.
+          message (string, required)
+            Reminder message.
         ");
     }
 }

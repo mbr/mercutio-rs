@@ -109,7 +109,7 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{JsonRpcError, McpServer, ToolDefinition, ToolRegistry};
+    use crate::{JsonRpcError, McpServer, ToolDefinitions, ToolRegistry};
 
     /// Minimal tool registry for testing builder behavior.
     enum TestTools {}
@@ -121,8 +121,8 @@ mod tests {
             })
         }
 
-        fn definitions() -> Vec<ToolDefinition> {
-            vec![]
+        fn definitions() -> ToolDefinitions {
+            ToolDefinitions::new(vec![])
         }
     }
 

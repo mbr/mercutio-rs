@@ -25,7 +25,9 @@ pub use serde;
 #[doc(hidden)]
 pub use serde_json;
 use thiserror::Error;
-pub use tools::{IntoToolResponse, NoTools, ToolDef, ToolDefinition, ToolOutput, ToolRegistry};
+pub use tools::{
+    IntoToolResponse, NoTools, ToolDef, ToolDefinition, ToolDefinitions, ToolOutput, ToolRegistry,
+};
 
 /// The connected MCP client.
 ///
