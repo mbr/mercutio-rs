@@ -153,6 +153,66 @@ impl ToolOutput {
     }
 }
 
+impl fmt::Display for ToolOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (i, block) in self.content.iter().enumerate() {
+            if i > 0 {
+                writeln!(f)?;
+                writeln!(f)?;
+            }
+            match block {
+                ContentBlock::TextContent(text) => {
+                    write!(f, "{}", text.text)?;
+                }
+                ContentBlock::ImageContent(img) => {
+                    write!(f, "[Image: {}, {} bytes]", img.mime_type, img.data.len())?;
+                }
+                ContentBlock::AudioContent(audio) => {
+                    write!(
+                        f,
+                        "[Audio: {}, {} bytes]",
+                        audio.mime_type,
+                        audio.data.len()
+                    )?;
+                }
+                ContentBlock::ResourceLink(link) => {
+                    write!(f, "[Resource: {} ({})]", link.name, link.uri)?;
+                }
+                ContentBlock::EmbeddedResource(res) => {
+                    use rust_mcp_schema::EmbeddedResourceResource;
+                    match &res.resource {
+                        EmbeddedResourceResource::TextResourceContents(text) => {
+                            write!(f, "[Embedded Text: {}]", text.uri)?;
+                        }
+                        EmbeddedResourceResource::BlobResourceContents(blob) => {
+                            let mime = blob.mime_type.as_deref().unwrap_or("unknown");
+                            write!(
+                                f,
+                                "[Embedded Blob: {}, {}, {} bytes]",
+                                blob.uri,
+                                mime,
+                                blob.blob.len()
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+
+        if let Some(structured) = &self.structured_content {
+            if !self.content.is_empty() {
+                writeln!(f)?;
+                writeln!(f)?;
+            }
+            writeln!(f, "Structured Content:")?;
+            let json = serde_json::to_string_pretty(structured).unwrap_or_default();
+            write!(f, "{}", json)?;
+        }
+
+        Ok(())
+    }
+}
+
 impl From<String> for ToolOutput {
     fn from(text: String) -> Self {
         Self::new().text(text)
@@ -801,5 +861,42 @@ mod tests {
           message (string, required)
             Reminder message.
         ");
+    }
+
+    #[test]
+    fn tool_output_display_text() {
+        let output = ToolOutput::new()
+            .text("Temperature: 72F")
+            .text("Conditions: Sunny");
+        insta::assert_snapshot!(output.to_string(), @r"
+        Temperature: 72F
+
+        Conditions: Sunny
+        ");
+    }
+
+    #[test]
+    fn tool_output_display_with_structured() {
+        #[derive(serde::Serialize)]
+        struct Weather {
+            temp: i32,
+            conditions: String,
+        }
+
+        let output = ToolOutput::new()
+            .text("Current weather")
+            .structured(&Weather {
+                temp: 72,
+                conditions: "Sunny".into(),
+            });
+        insta::assert_snapshot!(output.to_string(), @r#"
+        Current weather
+
+        Structured Content:
+        {
+          "conditions": "Sunny",
+          "temp": 72
+        }
+        "#);
     }
 }
