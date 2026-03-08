@@ -4,6 +4,7 @@
 //! input structs, a dispatch enum, and [`ToolRegistry`] implementation from a single declaration.
 
 use std::collections::HashMap;
+use std::fmt;
 
 use rust_mcp_schema::{CallToolResult, ContentBlock, ToolInputSchema};
 use serde::Serialize;
@@ -198,6 +199,54 @@ impl ToolDefinition {
             output_schema: None,
             title: None,
         }
+    }
+}
+
+impl fmt::Display for ToolDefinition {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "## {}", self.name)?;
+        writeln!(f)?;
+        writeln!(f, "{}", self.description)?;
+
+        let Some(props) = &self.input_schema.properties else {
+            return Ok(());
+        };
+        if props.is_empty() {
+            return Ok(());
+        }
+
+        writeln!(f)?;
+        writeln!(f, "Parameters:")?;
+
+        let mut names: Vec<_> = props.keys().collect();
+        names.sort();
+
+        for name in names {
+            let prop = &props[name];
+            let required = self.input_schema.required.contains(name);
+            let req_str = if required { "required" } else { "optional" };
+
+            let type_str = prop.get("type").and_then(|v| v.as_str()).unwrap_or("any");
+
+            write!(f, "  {name} ({type_str}, {req_str})")?;
+
+            if let Some(desc) = prop.get("description").and_then(|v| v.as_str()) {
+                writeln!(f)?;
+                write!(f, "    {desc}")?;
+            }
+
+            if let Some(enum_vals) = prop.get("enum").and_then(|v| v.as_array()) {
+                let vals: Vec<_> = enum_vals.iter().filter_map(|v| v.as_str()).collect();
+                if !vals.is_empty() {
+                    writeln!(f)?;
+                    write!(f, "    Values: {}", vals.join(", "))?;
+                }
+            }
+
+            writeln!(f)?;
+        }
+
+        Ok(())
     }
 }
 
@@ -522,5 +571,35 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn tool_definition_display() {
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct TestInput {
+            /// The city to look up.
+            city: String,
+            /// Temperature unit preference.
+            units: Option<String>,
+        }
+
+        impl super::ToolDef for TestInput {
+            const NAME: &'static str = "get_weather";
+            const DESCRIPTION: &'static str = "Gets weather for a city";
+        }
+
+        let def = ToolDefinition::from_tool::<TestInput>();
+        insta::assert_snapshot!(def.to_string(), @r"
+        ## get_weather
+
+        Gets weather for a city
+
+        Parameters:
+          city (string, required)
+            The city to look up.
+          units (any, optional)
+            Temperature unit preference.
+        ");
     }
 }

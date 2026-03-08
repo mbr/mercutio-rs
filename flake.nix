@@ -51,7 +51,10 @@
 
         devShells.default = pkgs.mkShell {
           inputsFrom = [ self.packages.${system}.default ];
-          buildInputs = [ pkgs.nixfmt-rfc-style ];
+          buildInputs = [
+            pkgs.cargo-insta
+            pkgs.nixfmt-rfc-style
+          ];
         };
       }
     );
