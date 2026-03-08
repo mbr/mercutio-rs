@@ -2,6 +2,38 @@
 //!
 //! Provides type-safe tool registration for MCP servers. The [`tool_registry!`] macro generates
 //! input structs, a dispatch enum, and [`ToolRegistry`] implementation from a single declaration.
+//!
+//! # Tool Output Format
+//!
+//! Prefer plain text over JSON for content the LLM will reason about. Research shows JSON-mode
+//! degrades LLM reasoning performance (see <https://arxiv.org/abs/2408.02442>). Use JSON
+//! ([`ToolOutput::json`]) only when the output needs programmatic parsing downstream. For tool
+//! results the LLM will interpret and relay to users, return human-readable text:
+//!
+//! ```ignore
+//! // Good: readable text the LLM can reason about
+//! Ok(format!("Temperature: {}F\nConditions: {}", temp, conditions))
+//!
+//! // Avoid: JSON for LLM consumption
+//! Ok(ToolOutput::json(&WeatherData { temp, conditions }))
+//! ```
+//!
+//! # Inspecting Tool Definitions
+//!
+//! Use [`ToolDefinitions`] to see exactly what the LLM receives when it queries available tools.
+//! This is useful for debugging and snapshot testing with `insta`:
+//!
+//! ```ignore
+//! #[test]
+//! fn tool_schemas_are_stable() {
+//!     insta::assert_snapshot!(MyTools::definitions().to_string(), @r"
+//!     # Tools
+//!
+//!     ## get_weather
+//!     ...
+//!     ");
+//! }
+//! ```
 
 use std::collections::HashMap;
 use std::fmt;
@@ -28,6 +60,20 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 /// Provides a builder API and ergonomic conversions for constructing tool output. For domain
 /// errors (tool ran but failed), return an `Err` from your handler instead of using this type.
 ///
+/// # Text vs JSON
+///
+/// Prefer plain text for tool outputs the LLM will reason about. Research shows JSON-mode
+/// degrades reasoning performance (see [module docs](self) for details). Reserve
+/// [`ToolOutput::json`] for data that needs programmatic parsing downstream.
+///
+/// ```ignore
+/// // Recommended: human-readable text
+/// Ok(format!("Temperature: {}F\nConditions: {}", temp, conditions))
+///
+/// // Use only when structured parsing is needed downstream
+/// Ok(ToolOutput::json(&data))
+/// ```
+///
 /// # Simple Text
 ///
 /// Return a text response (accepts `&str`, [`String`], or [`format!`] results):
@@ -39,9 +85,10 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 /// # Structured JSON
 ///
 /// Return structured data with [`ToolOutput::json`]. This sets `structuredContent` and adds
-/// the JSON as escaped text for backwards compatibility (per MCP spec):
+/// the JSON as escaped text for backwards compatibility (per MCP spec). Only use this when the
+/// output requires programmatic parsing:
 /// ```ignore
-/// Ok(ToolOutput::json(&weather_data))
+/// Ok(ToolOutput::json(&api_response))
 /// ```
 ///
 /// # Multiple Content Blocks
@@ -253,17 +300,36 @@ impl fmt::Display for ToolDefinition {
 
 /// Collection of tool definitions returned by [`ToolRegistry::definitions`].
 ///
-/// Implements [`Display`] to render all tools as a human-readable document, useful for debugging
-/// and snapshot testing with tools like `insta`.
+/// Implements [`Display`] to render all tools as a human-readable document. This lets you see
+/// exactly what the LLM receives when it queries your MCP server's available tools, making it
+/// easy to verify tool names, descriptions, and parameter schemas.
 ///
-/// # Example
+/// # Snapshot Testing with Insta
+///
+/// Use `insta` inline snapshots to catch unintended changes to your tool schemas:
 ///
 /// ```ignore
 /// use mercutio::ToolRegistry;
 ///
-/// // Snapshot test your MCP server's tool definitions:
-/// insta::assert_snapshot!(MyTools::definitions().to_string());
+/// #[test]
+/// fn tool_schemas_are_stable() {
+///     // The snapshot is stored inline - run `cargo insta test` to update
+///     insta::assert_snapshot!(MyTools::definitions().to_string(), @r"
+///     # Tools
+///
+///     ## get_weather
+///
+///     Gets current weather for a location
+///
+///     Parameters:
+///       location (string, required)
+///         City name or address
+///     ");
+/// }
 /// ```
+///
+/// When you change a tool's name, description, or parameters, the test fails and `cargo insta
+/// review` shows the diff. This ensures schema changes are intentional and documented.
 #[derive(Debug)]
 pub struct ToolDefinitions(Vec<ToolDefinition>);
 
