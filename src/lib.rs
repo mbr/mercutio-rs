@@ -6,7 +6,7 @@ mod tools;
 
 pub mod io;
 
-use std::{marker::PhantomData, mem};
+use std::{fmt, marker::PhantomData, mem};
 
 pub use config::McpServerBuilder;
 use config::ServerConfig;
@@ -72,6 +72,23 @@ enum Phase {
 ///
 /// The `ping` method is available in all phases for connection health checks. Other requests are
 /// rejected until the handshake completes; [`McpServer::is_ready`] can check this.
+///
+/// # Snapshot Testing
+///
+/// `McpServer` implements [`Display`] to render the full server document: name, version,
+/// instructions, and tool definitions. Use this for snapshot testing with `insta`:
+///
+/// ```ignore
+/// #[test]
+/// fn server_config_is_stable() {
+///     let server = McpServer::<MyTools>::builder()
+///         .name("my-server")
+///         .version("1.0.0")
+///         .instructions("You are a helpful assistant.")
+///         .build();
+///     insta::assert_snapshot!(server.to_string());
+/// }
+/// ```
 pub struct McpServer<R: ToolRegistry = NoTools> {
     /// Server configuration.
     config: ServerConfig,
@@ -433,6 +450,29 @@ impl<R: ToolRegistry> McpServer<R> {
                 got: format!("request:{method}"),
             })),
         }
+    }
+}
+
+impl<R: ToolRegistry> fmt::Display for McpServer<R> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "# {}", self.config.info.name)?;
+        writeln!(f)?;
+        writeln!(f, "Version: {}", self.config.info.version)?;
+
+        if let Some(instructions) = &self.config.instructions {
+            writeln!(f)?;
+            writeln!(f, "## Instructions")?;
+            writeln!(f)?;
+            writeln!(f, "{instructions}")?;
+        }
+
+        let defs = R::definitions();
+        if !defs.is_empty() {
+            writeln!(f)?;
+            write!(f, "{defs}")?;
+        }
+
+        Ok(())
     }
 }
 

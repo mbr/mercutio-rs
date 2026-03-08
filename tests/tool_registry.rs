@@ -58,3 +58,36 @@ fn macro_generated_tools_work_with_server() {
         _ => panic!("expected ToolCall"),
     }
 }
+
+#[test]
+fn server_display() {
+    let server = McpServer::<TestTools>::builder()
+        .name("weather-service")
+        .version("1.0.0")
+        .instructions("You help users check the weather.")
+        .build();
+
+    insta::assert_snapshot!(server.to_string(), @r"
+    # weather-service
+
+    Version: 1.0.0
+
+    ## Instructions
+
+    You help users check the weather.
+
+    # Tools
+
+    ## get_weather
+
+    Gets weather for a city
+
+    Parameters:
+      city (string, required)
+        City name.
+
+    ## ping
+
+    Health check
+    ");
+}
