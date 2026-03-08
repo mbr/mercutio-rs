@@ -35,9 +35,7 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
-use std::fmt;
-use std::ops::Index;
+use std::{collections::HashMap, fmt, ops::Index};
 
 use rust_mcp_schema::{CallToolResult, ContentBlock, ToolInputSchema};
 use serde::Serialize;
