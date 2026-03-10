@@ -44,6 +44,16 @@
 //!     ");
 //! }
 //! ```
+//!
+//! For raw JSON schema snapshots, note that [`ToolInputSchema`] uses `HashMap` internally, causing
+//! non-deterministic key ordering. Serialize via [`serde_json::to_value`] first to convert to
+//! `serde_json::Map` (BTreeMap-backed) for stable output:
+//!
+//! ```ignore
+//! let def = ToolDefinition::from_tool::<MyTool>();
+//! let json = serde_json::to_value(&def.input_schema).unwrap();
+//! insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap());
+//! ```
 
 use std::{collections::HashMap, fmt, ops::Index};
 
