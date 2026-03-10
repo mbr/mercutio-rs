@@ -54,6 +54,10 @@
 //! let json = serde_json::to_value(&def.input_schema).unwrap();
 //! insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap());
 //! ```
+//!
+//! This workaround only affects snapshot testing; the actual MCP wire protocol still serializes
+//! with non-deterministic key order. See <https://github.com/rust-mcp-stack/rust-mcp-schema/pull/105>
+//! for the upstream fix.
 
 use std::{collections::HashMap, fmt, ops::Index};
 
