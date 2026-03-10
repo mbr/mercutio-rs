@@ -311,7 +311,10 @@ pub struct ToolDefinition {
 impl ToolDefinition {
     /// Creates a definition from a type implementing [`ToolDef`].
     pub fn from_tool<T: ToolDef>() -> Self {
-        let schema = schemars::schema_for!(T);
+        let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
+            s.option_nullable = false;
+        });
+        let schema = settings.into_generator().into_root_schema_for::<T>();
         let json = serde_json::to_value(&schema).expect("schema serialization failed");
         let input_schema = convert_schema_to_tool_input(&json);
         Self {
