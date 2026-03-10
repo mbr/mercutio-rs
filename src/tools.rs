@@ -855,9 +855,9 @@ mod tests {
         }
 
         let def = ToolDefinition::from_tool::<TestInput>();
-        insta::assert_json_snapshot!(def.input_schema, {
-            ".properties" => insta::sorted_redaction()
-        }, @r#"
+        // Serialize via `Value` to convert HashMap to BTreeMap-backed Map for stable key order.
+        let json = serde_json::to_value(&def.input_schema).expect("serialization failed");
+        insta::assert_snapshot!(serde_json::to_string_pretty(&json).expect("formatting failed"), @r#"
         {
           "properties": {
             "count": {
