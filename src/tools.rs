@@ -312,7 +312,7 @@ impl ToolDefinition {
     /// Creates a definition from a type implementing [`ToolDef`].
     pub fn from_tool<T: ToolDef>() -> Self {
         let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
-            s.option_nullable = false;
+            s.option_add_null_type = false;
         });
         let schema = settings.into_generator().into_root_schema_for::<T>();
         let json = serde_json::to_value(&schema).expect("schema serialization failed");
@@ -833,9 +833,50 @@ mod tests {
         Parameters:
           city (string, required)
             The city to look up.
-          units (any, optional)
+          units (string, optional)
             Temperature unit preference.
         ");
+    }
+
+    #[test]
+    fn tool_definition_schema_json() {
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct TestInput {
+            /// Required field.
+            name: String,
+            /// Optional field.
+            count: Option<u32>,
+        }
+
+        impl super::ToolDef for TestInput {
+            const NAME: &'static str = "test";
+            const DESCRIPTION: &'static str = "Test tool";
+        }
+
+        let def = ToolDefinition::from_tool::<TestInput>();
+        insta::assert_json_snapshot!(def.input_schema, {
+            ".properties" => insta::sorted_redaction()
+        }, @r#"
+        {
+          "properties": {
+            "count": {
+              "description": "Optional field.",
+              "format": "uint32",
+              "minimum": 0.0,
+              "type": "integer"
+            },
+            "name": {
+              "description": "Required field.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "type": "object"
+        }
+        "#);
     }
 
     #[test]
