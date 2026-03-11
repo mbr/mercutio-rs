@@ -274,7 +274,7 @@ impl From<&str> for ToolOutput {
 /// - **Direct values** (`String`, `&str`, [`ToolOutput`]): Converted to a successful response
 ///   with `is_error: false`.
 /// - **`Result<T, E>`**: `Ok(v)` becomes a successful response; `Err(e)` becomes a domain error
-///   response with `is_error: true` and the full error chain as content.
+///   response with `is_error: true` and the error's display text as content.
 pub trait IntoToolResponse {
     /// Converts this value into a [`CallToolResult`].
     fn into_tool_response(self) -> CallToolResult;
@@ -301,28 +301,14 @@ impl IntoToolResponse for &str {
 impl<T, E> IntoToolResponse for Result<T, E>
 where
     T: Into<ToolOutput>,
-    E: std::error::Error,
+    E: std::fmt::Display,
 {
     fn into_tool_response(self) -> CallToolResult {
         match self {
             Ok(v) => v.into().into_call_result(false),
-            Err(e) => ToolOutput::new()
-                .text(format_error_chain(&e))
-                .into_call_result(true),
+            Err(e) => ToolOutput::new().text(e.to_string()).into_call_result(true),
         }
     }
-}
-
-/// Formats an error and its full source chain.
-fn format_error_chain(err: &dyn std::error::Error) -> String {
-    let mut msg = err.to_string();
-    let mut current = err.source();
-    while let Some(cause) = current {
-        msg.push_str(": ");
-        msg.push_str(&cause.to_string());
-        current = cause.source();
-    }
-    msg
 }
 
 /// MCP tool definition for `tools/list` responses.
@@ -696,22 +682,8 @@ macro_rules! tool_registry {
 
 #[cfg(test)]
 mod tests {
-    use std::fmt;
-
     use super::{IntoToolResponse, NoTools, ToolDefinition, ToolOutput, ToolRegistry};
     use crate::JsonRpcError;
-
-    /// Simple error type for testing.
-    #[derive(Debug)]
-    struct TestError(&'static str);
-
-    impl fmt::Display for TestError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            write!(f, "{}", self.0)
-        }
-    }
-
-    impl std::error::Error for TestError {}
 
     #[test]
     fn no_tools_definitions_empty() {
@@ -805,56 +777,16 @@ mod tests {
 
     #[test]
     fn result_err_sets_is_error() {
-        let result: Result<String, TestError> = Err(TestError("something failed"));
+        let result: Result<String, &str> = Err("something failed");
         let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
         assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(true));
     }
 
     #[test]
     fn result_ok_sets_is_error_false() {
-        let result: Result<&str, TestError> = Ok("success");
+        let result: Result<&str, &str> = Ok("success");
         let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
         assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(false));
-    }
-
-    #[test]
-    fn error_chain_is_formatted() {
-        #[derive(Debug)]
-        struct OuterError(InnerError);
-
-        impl fmt::Display for OuterError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "outer error")
-            }
-        }
-
-        impl std::error::Error for OuterError {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                Some(&self.0)
-            }
-        }
-
-        #[derive(Debug)]
-        struct InnerError;
-
-        impl fmt::Display for InnerError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "inner cause")
-            }
-        }
-
-        impl std::error::Error for InnerError {}
-
-        let result: Result<&str, OuterError> = Err(OuterError(InnerError));
-        let call_result = result.into_tool_response();
-        let json = serde_json::to_value(&call_result).expect("serialize");
-        let content = json
-            .get("content")
-            .expect("content")
-            .as_array()
-            .expect("array");
-        let text = content[0].get("text").expect("text").as_str().expect("str");
-        assert_eq!(text, "outer error: inner cause");
     }
 
     #[test]

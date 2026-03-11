@@ -51,7 +51,7 @@ pub fn run_stdio<R, H, T, E>(server: McpServer<R>, handler: H) -> Result<(), IoE
 where
     R: ToolRegistry,
     T: Into<ToolOutput>,
-    E: std::error::Error,
+    E: std::fmt::Display,
     H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
 {
     let stdin = std::io::stdin().lock();
@@ -72,7 +72,7 @@ pub fn run_on<R, H, T, E, I, O>(
 where
     R: ToolRegistry,
     T: Into<ToolOutput>,
-    E: std::error::Error,
+    E: std::fmt::Display,
     H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
     I: BufRead,
     O: Write,
