@@ -311,6 +311,56 @@ where
     }
 }
 
+/// Wrapper that formats the full error chain for tool responses.
+///
+/// By default, tool errors only show the top-level message from [`Display`]. When using
+/// `thiserror` with `#[source]`, nested error causes are attached but not displayed. This wrapper
+/// traverses the [`Error::source`](std::error::Error::source) chain to produce a complete message
+/// like `"google API error: HTTP request failed: connection refused"`.
+///
+/// # When to Use
+///
+/// Use `WithSource` when your error type has nested causes that would help the LLM understand
+/// what went wrong. This is especially useful for errors from external services, I/O operations,
+/// or any chain where the root cause provides actionable information.
+///
+/// # Example
+///
+/// ```ignore
+/// use mercutio::WithSource;
+///
+/// async fn handle_tool(tool: MyTools) -> Result<String, WithSource<MyError>> {
+///     let data = fetch_api().map_err(WithSource)?;
+///     Ok(format!("Got: {data}"))
+/// }
+/// ```
+///
+/// Without `WithSource`, an API failure might show: `"API request failed"`
+///
+/// With `WithSource`, it shows: `"API request failed: HTTP error: 403 Forbidden"`
+#[derive(Debug)]
+pub struct WithSource<E>(pub E);
+
+impl<E: std::error::Error> fmt::Display for WithSource<E> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        let mut current: &dyn std::error::Error = &self.0;
+        while let Some(source) = current.source() {
+            write!(f, ": {}", source)?;
+            current = source;
+        }
+        Ok(())
+    }
+}
+
+impl<E: std::error::Error> std::error::Error for WithSource<E> {}
+
+impl<E: std::error::Error> From<E> for WithSource<E> {
+    fn from(err: E) -> Self {
+        Self(err)
+    }
+}
+
 /// MCP tool definition for `tools/list` responses.
 #[derive(Debug)]
 pub struct ToolDefinition {
@@ -983,5 +1033,39 @@ mod tests {
           "temp": 72
         }
         "#);
+    }
+
+    #[test]
+    fn with_source_formats_error_chain() {
+        use std::fmt;
+
+        #[derive(Debug)]
+        struct OuterError(InnerError);
+
+        impl fmt::Display for OuterError {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "outer error")
+            }
+        }
+
+        impl std::error::Error for OuterError {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.0)
+            }
+        }
+
+        #[derive(Debug)]
+        struct InnerError;
+
+        impl fmt::Display for InnerError {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                write!(f, "inner cause")
+            }
+        }
+
+        impl std::error::Error for InnerError {}
+
+        let wrapped = super::WithSource(OuterError(InnerError));
+        assert_eq!(wrapped.to_string(), "outer error: inner cause");
     }
 }
