@@ -318,6 +318,10 @@ where
 /// traverses the [`Error::source`](std::error::Error::source) chain to produce a complete message
 /// like `"google API error: HTTP request failed: connection refused"`.
 ///
+/// This pattern follows the design from
+/// [The elements of Rust error handling](https://compilersaysno.com/posts/the-elements-of-rust-error-handling/):
+/// keep `Display` impls minimal and let callers decide when to show the full chain.
+///
 /// # When to Use
 ///
 /// Use `WithSource` when your error type has nested causes that would help the LLM understand
