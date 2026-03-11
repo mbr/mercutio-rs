@@ -26,7 +26,7 @@ use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 /// Blanket impl for `Fn(Option<McpSessionId>, R) -> impl Future<Output = Result<T, E>>`.
 pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
     /// Error type returned by the handler.
-    type Error: std::fmt::Display;
+    type Error: std::error::Error;
 
     /// Handles a tool invocation and returns the result.
     fn handle(
@@ -42,7 +42,7 @@ where
     F: Fn(Option<McpSessionId>, R) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, E>> + Send,
     T: Into<ToolOutput>,
-    E: std::fmt::Display,
+    E: std::error::Error,
 {
     type Error = E;
 
@@ -56,7 +56,7 @@ where
 /// Every [`ToolHandler`] is automatically a `MutToolHandler` via blanket impl.
 pub trait MutToolHandler<R: ToolRegistry> {
     /// Error type returned by the handler.
-    type Error: std::fmt::Display;
+    type Error: std::error::Error;
 
     /// Handles a tool invocation and returns the result.
     fn handle(
