@@ -61,7 +61,8 @@
 
 use std::{collections::HashMap, fmt, ops::Index};
 
-use rust_mcp_schema::{CallToolResult, ContentBlock, ToolInputSchema};
+use base64::Engine;
+use rust_mcp_schema::{AudioContent, CallToolResult, ContentBlock, ImageContent, ToolInputSchema};
 use serde::Serialize;
 
 use crate::JsonRpcError;
@@ -168,6 +169,26 @@ impl ToolOutput {
     /// Adds a text content block.
     pub fn text<I: Into<String>>(mut self, text: I) -> Self {
         self.content.push(ContentBlock::text_content(text.into()));
+        self
+    }
+
+    /// Adds an image content block.
+    ///
+    /// The image data is base64-encoded automatically.
+    pub fn image<S: Into<String>>(mut self, data: &[u8], mime_type: S) -> Self {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+        self.content
+            .push(ImageContent::new(encoded, mime_type.into(), None, None).into());
+        self
+    }
+
+    /// Adds an audio content block.
+    ///
+    /// The audio data is base64-encoded automatically.
+    pub fn audio<S: Into<String>>(mut self, data: &[u8], mime_type: S) -> Self {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+        self.content
+            .push(AudioContent::new(encoded, mime_type.into(), None, None).into());
         self
     }
 
@@ -1037,6 +1058,20 @@ mod tests {
           "temp": 72
         }
         "#);
+    }
+
+    #[test]
+    fn tool_output_image_block() {
+        let png_data = b"\x89PNG\r\n\x1a\n";
+        let output = ToolOutput::new().image(png_data, "image/png");
+        insta::assert_snapshot!(output.to_string(), @"[Image: image/png, 12 bytes]");
+    }
+
+    #[test]
+    fn tool_output_audio_block() {
+        let wav_header = b"RIFF\x00\x00\x00\x00WAVEfmt ";
+        let output = ToolOutput::new().audio(wav_header, "audio/wav");
+        insta::assert_snapshot!(output.to_string(), @"[Audio: audio/wav, 24 bytes]");
     }
 
     #[test]
