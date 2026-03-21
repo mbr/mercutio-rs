@@ -62,7 +62,10 @@
 use std::{collections::HashMap, fmt, ops::Index};
 
 use base64::Engine;
-use rust_mcp_schema::{AudioContent, CallToolResult, ContentBlock, ImageContent, ToolInputSchema};
+use rust_mcp_schema::{
+    AudioContent, BlobResourceContents, CallToolResult, ContentBlock, EmbeddedResource,
+    ImageContent, ResourceLink, TextResourceContents, ToolInputSchema,
+};
 use serde::Serialize;
 
 use crate::JsonRpcError;
@@ -189,6 +192,79 @@ impl ToolOutput {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
         self.content
             .push(AudioContent::new(encoded, mime_type.into(), None, None).into());
+        self
+    }
+
+    /// Adds an embedded blob resource.
+    ///
+    /// Use for binary content with URI metadata, such as PDFs or other documents. The data is
+    /// base64-encoded automatically.
+    pub fn embedded_blob<U: Into<String>, M: Into<String>>(
+        mut self,
+        data: &[u8],
+        uri: U,
+        mime_type: M,
+    ) -> Self {
+        let encoded = base64::engine::general_purpose::STANDARD.encode(data);
+        let blob = BlobResourceContents {
+            blob: encoded,
+            uri: uri.into(),
+            mime_type: Some(mime_type.into()),
+            meta: None,
+        };
+        self.content
+            .push(EmbeddedResource::new(blob.into(), None, None).into());
+        self
+    }
+
+    /// Adds an embedded text resource.
+    ///
+    /// Like [`text`](Self::text) but includes a URI, useful when the content represents a file
+    /// or addressable resource.
+    pub fn embedded_text<T: Into<String>, U: Into<String>, M: Into<String>>(
+        mut self,
+        text: T,
+        uri: U,
+        mime_type: Option<M>,
+    ) -> Self {
+        let text_resource = TextResourceContents {
+            text: text.into(),
+            uri: uri.into(),
+            mime_type: mime_type.map(Into::into),
+            meta: None,
+        };
+        self.content
+            .push(EmbeddedResource::new(text_resource.into(), None, None).into());
+        self
+    }
+
+    /// Adds a resource link.
+    ///
+    /// References an MCP resource by URI rather than embedding content inline. The client
+    /// fetches it separately via `resources/read`.
+    pub fn resource_link<U: Into<String>, N: Into<String>>(mut self, uri: U, name: N) -> Self {
+        self.content.push(
+            ResourceLink::new(name.into(), uri.into(), None, None, None, None, None, None).into(),
+        );
+        self
+    }
+
+    /// Adds a raw content block.
+    ///
+    /// Use this for content types not covered by the convenience methods ([`text`](Self::text),
+    /// [`image`](Self::image), [`audio`](Self::audio)). Types from [`rust_mcp_schema`] that
+    /// implement `Into<ContentBlock>` can be passed directly:
+    ///
+    /// ```ignore
+    /// use mercutio::rust_mcp_schema::{EmbeddedResource, BlobResourceContents};
+    ///
+    /// ToolOutput::new().content(EmbeddedResource {
+    ///     resource: BlobResourceContents { ... }.into(),
+    ///     ...
+    /// })
+    /// ```
+    pub fn content(mut self, block: impl Into<ContentBlock>) -> Self {
+        self.content.push(block.into());
         self
     }
 

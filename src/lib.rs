@@ -10,7 +10,10 @@ use std::{fmt, marker::PhantomData, mem};
 
 pub use config::McpServerBuilder;
 use config::ServerConfig;
-#[doc(hidden)]
+/// Re-export of the MCP schema types.
+///
+/// Use these with [`ToolOutput::content`] to construct content blocks not covered by the
+/// convenience methods.
 pub use rust_mcp_schema;
 use rust_mcp_schema::{
     CallToolRequestParams, ClientCapabilities, INTERNAL_ERROR, INVALID_PARAMS, Implementation,

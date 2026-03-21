@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `ToolOutput::embedded_blob()` for binary content with URI metadata (e.g., PDFs).
+- `ToolOutput::embedded_text()` for text content with URI metadata.
+- `ToolOutput::resource_link()` for referencing MCP resources by URI.
+- `ToolOutput::content()` method for adding raw `ContentBlock` types not covered by convenience methods.
+- Public `rust_mcp_schema` re-export for constructing content blocks like `EmbeddedResource`.
+
 ### Changed
 
 - Enable `preserve_order` feature for `schemars` to maintain field order in generated JSON schemas.
