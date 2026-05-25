@@ -9,11 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Display` implementation for `Rfc3339`.
+
+## [0.7.0] - 2026-05-25
+
+### Added
+
+- `Rfc3339` timestamp type for tool inputs with `jiff` and `chrono` feature flags.
+
+## [0.6.4] - 2026-03-21
+
+### Added
+
 - `ToolOutput::embedded_blob()` for binary content with URI metadata (e.g., PDFs).
 - `ToolOutput::embedded_text()` for text content with URI metadata.
 - `ToolOutput::resource_link()` for referencing MCP resources by URI.
 - `ToolOutput::content()` method for adding raw `ContentBlock` types not covered by convenience methods.
 - Public `rust_mcp_schema` re-export for constructing content blocks like `EmbeddedResource`.
+
+## [0.6.3] - 2026-03-21
 
 ### Changed
 
@@ -125,7 +139,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio/compare/0.6.2...HEAD
+[Unreleased]: https://github.com/mbr/mercutio/compare/0.7.0...HEAD
+[0.7.0]: https://github.com/mbr/mercutio/compare/0.6.4...0.7.0
+[0.6.4]: https://github.com/mbr/mercutio/compare/0.6.3...0.6.4
+[0.6.3]: https://github.com/mbr/mercutio/compare/0.6.2...0.6.3
 [0.6.2]: https://github.com/mbr/mercutio/compare/0.6.1...0.6.2
 [0.6.1]: https://github.com/mbr/mercutio/compare/0.6.0...0.6.1
 [0.6.0]: https://github.com/mbr/mercutio/compare/0.5.2...0.6.0
