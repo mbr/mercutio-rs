@@ -2,6 +2,8 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
+#[cfg(any(feature = "jiff", feature = "chrono"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "jiff", feature = "chrono"))))]
 mod rfc3339;
 mod tools;
 
@@ -11,6 +13,8 @@ use std::{fmt, marker::PhantomData, mem};
 
 pub use config::McpServerBuilder;
 use config::ServerConfig;
+#[cfg(any(feature = "jiff", feature = "chrono"))]
+#[cfg_attr(docsrs, doc(cfg(any(feature = "jiff", feature = "chrono"))))]
 pub use rfc3339::Rfc3339;
 /// Re-export of the MCP schema types.
 ///

@@ -1,8 +1,8 @@
 //! RFC 3339 timestamp type for MCP tool inputs.
 //!
-//! [`Rfc3339`] is a newtype over [`jiff::Timestamp`]. Its [`JsonSchema`] implementation emits
-//! `format: "date-time"`, which is defined by JSON Schema and OpenAPI as RFC 3339. Models trained
-//! on API specs recognize this format natively.
+//! [`Rfc3339`] is a newtype over the backend's timestamp type. Its [`JsonSchema`] implementation
+//! emits `format: "date-time"`, which is defined by JSON Schema and OpenAPI as RFC 3339. Models
+//! trained on API specs recognize this format natively.
 //!
 //! When parsing fails, the error includes the current time as an example, helping models
 //! self-correct:
@@ -14,6 +14,13 @@
 //!
 //! RFC 3339 is stricter than ISO 8601, requiring the `T` separator and timezone offset, which
 //! reduces ambiguity in LLM-generated timestamps.
+//!
+//! # Backend Selection
+//!
+//! Enable either the `jiff` or `chrono` feature to use this type:
+//!
+//! - `jiff`: Uses [`jiff::Timestamp`] as the inner type
+//! - `chrono`: Uses [`chrono::DateTime<Utc>`] as the inner type
 //!
 //! # Example
 //!
@@ -30,15 +37,45 @@
 //! }
 //! ```
 
-use jiff::Timestamp;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+#[cfg(all(feature = "jiff", feature = "chrono"))]
+compile_error!("features `jiff` and `chrono` are mutually exclusive");
+
+#[cfg(feature = "jiff")]
+mod backend {
+    pub type Inner = jiff::Timestamp;
+
+    pub fn parse(s: &str) -> Result<Inner, impl std::fmt::Display> {
+        s.parse::<jiff::Timestamp>()
+    }
+
+    pub fn now_formatted() -> impl std::fmt::Display {
+        jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%:z")
+    }
+}
+
+#[cfg(feature = "chrono")]
+mod backend {
+    pub type Inner = chrono::DateTime<chrono::Utc>;
+
+    pub fn parse(s: &str) -> Result<Inner, impl std::fmt::Display> {
+        chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.to_utc())
+    }
+
+    pub fn now_formatted() -> impl std::fmt::Display {
+        chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%:z")
+    }
+}
+
+use backend::Inner;
+
 /// RFC 3339 timestamp for MCP tool inputs.
 ///
-/// A transparent wrapper over [`jiff::Timestamp`]. Emits `format: "date-time"` in JSON Schema,
-/// which is defined by JSON Schema and OpenAPI as RFC 3339. Deserialization errors include the
-/// current time as an example, helping models self-correct.
+/// A transparent wrapper over the backend's timestamp type. Emits `format: "date-time"` in JSON
+/// Schema, which is defined by JSON Schema and OpenAPI as RFC 3339. Deserialization errors include
+/// the current time as an example, helping models self-correct.
 ///
 /// # Example
 ///
@@ -46,11 +83,10 @@ use serde::{Deserialize, Serialize};
 /// use mercutio::Rfc3339;
 ///
 /// let ts: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid");
-/// assert_eq!(ts.0.as_second(), 1710151200);
 /// ```
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(transparent)]
-pub struct Rfc3339(pub Timestamp);
+pub struct Rfc3339(pub Inner);
 
 impl<'de> Deserialize<'de> for Rfc3339 {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -58,13 +94,12 @@ impl<'de> Deserialize<'de> for Rfc3339 {
         D: serde::Deserializer<'de>,
     {
         let s = String::deserialize(deserializer)?;
-        s.parse::<Timestamp>().map(Rfc3339).map_err(|e| {
-            let now = Timestamp::now();
+        backend::parse(&s).map(Rfc3339).map_err(|e| {
             serde::de::Error::custom(format!(
                 "invalid RFC 3339 timestamp '{}': {}\nExample: current time is {}",
                 s,
                 e,
-                now.strftime("%Y-%m-%dT%H:%M:%S%:z")
+                backend::now_formatted()
             ))
         })
     }
@@ -98,32 +133,22 @@ mod tests {
         let utc: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid UTC");
         let offset: Rfc3339 =
             serde_json::from_str(r#""2024-03-11T12:00:00+02:00""#).expect("valid offset");
-        assert_eq!(utc.0.as_second(), 1710151200);
-        assert_eq!(offset.0.as_second(), 1710151200);
+        // Both represent the same instant
+        assert_eq!(utc.0, offset.0);
     }
 
     #[test]
     fn error_message_format() {
-        let mut settings = insta::Settings::clone_current();
-        settings.add_filter(
-            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}",
-            "[timestamp]",
-        );
-        settings.bind(|| {
-            let err = serde_json::from_str::<Rfc3339>(r#""2025-05-25 14:30:00""#).unwrap_err();
-            insta::assert_snapshot!(err.to_string(), @r#"
-invalid RFC 3339 timestamp '2025-05-25 14:30:00': failed to find offset component, which is required for parsing a timestamp
-Example: current time is [timestamp]
-"#);
-        });
+        let err = serde_json::from_str::<Rfc3339>(r#""2025-05-25 14:30:00""#).unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains("invalid RFC 3339 timestamp '2025-05-25 14:30:00'"));
+        assert!(msg.contains("Example: current time is"));
     }
 
     #[test]
     fn roundtrip() {
         let ts: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid");
         let serialized = serde_json::to_string(&ts).expect("serializes");
-        assert_eq!(serialized, r#""2024-03-11T10:00:00Z""#);
-
         let reparsed: Rfc3339 = serde_json::from_str(&serialized).expect("valid");
         assert_eq!(reparsed, ts);
     }

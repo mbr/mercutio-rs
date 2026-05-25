@@ -11,6 +11,8 @@ documentation = "https://docs.rs/mercutio"
 io-stdlib = []
 io-tokio = ["dep:tokio"]
 io-axum = ["dep:axum", "dep:tokio", "rand"]
+jiff = ["dep:jiff"]
+chrono = ["dep:chrono"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -21,7 +23,8 @@ rust-mcp-schema = "0.7"
 schemars = { version = "0.8", features = ["preserve_order"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { version = "0.2", features = ["serde"], optional = true }
+chrono = { version = "0.4", features = ["serde"], optional = true }
 base64 = "0.22"
 thiserror = "2.0"
 tokio = { version = "1", features = ["io-std", "io-util", "sync"], optional = true }
