@@ -30,6 +30,6 @@ axum = { version = "0.8", optional = true }
 rand = { version = "0.9", optional = true }
 
 [dev-dependencies]
-insta = "1.43"
+insta = { version = "=1.46.3", features = ["filters"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tower = { version = "0.5", features = ["util"] }

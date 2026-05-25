@@ -7,7 +7,7 @@
 //! models self-correct:
 //!
 //! ```text
-//! invalid RFC 3339 timestamp 'tomorrow': failed to find ...
+//! invalid RFC 3339 timestamp '2025-05-25 14:30:00': failed to find ...
 //! Example: current time is 2025-05-25T14:30:00+02:00
 //! ```
 
@@ -87,14 +87,19 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_error_includes_example() {
-        let err = serde_json::from_str::<Rfc3339>(r#""not-a-timestamp""#).unwrap_err();
-        let msg = err.to_string();
-        assert!(
-            msg.contains("invalid RFC 3339 timestamp 'not-a-timestamp'"),
-            "{msg}"
+    fn error_message_format() {
+        let mut settings = insta::Settings::clone_current();
+        settings.add_filter(
+            r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2}",
+            "[timestamp]",
         );
-        assert!(msg.contains("Example: current time is"), "{msg}");
+        settings.bind(|| {
+            let err = serde_json::from_str::<Rfc3339>(r#""2025-05-25 14:30:00""#).unwrap_err();
+            insta::assert_snapshot!(err.to_string(), @r#"
+invalid RFC 3339 timestamp '2025-05-25 14:30:00': failed to find offset component, which is required for parsing a timestamp
+Example: current time is [timestamp]
+"#);
+        });
     }
 
     #[test]
