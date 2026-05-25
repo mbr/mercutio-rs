@@ -280,6 +280,24 @@ impl ToolOutput {
         self
     }
 
+    /// Returns the content blocks.
+    pub fn content_blocks(&self) -> &[ContentBlock] {
+        &self.content
+    }
+
+    /// Returns the structured content, if set.
+    pub fn structured_content(&self) -> Option<&serde_json::Map<String, serde_json::Value>> {
+        self.structured_content.as_ref()
+    }
+
+    /// Returns the text if output contains exactly one text block.
+    pub fn as_text(&self) -> Option<&str> {
+        match self.content.as_slice() {
+            [ContentBlock::TextContent(text)] => Some(&text.text),
+            _ => None,
+        }
+    }
+
     /// Converts to the MCP [`CallToolResult`] with the given error flag.
     fn into_call_result(self, is_error: bool) -> CallToolResult {
         CallToolResult {

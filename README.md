@@ -156,7 +156,10 @@ let handler = Handler;
 let tool = Tools::Greet(Greet { name: "Alice".into() });
 
 let output = handler.handle(None, tool).await.expect("handler failed");
-assert!(output.to_string().contains("Alice"));
+assert_eq!(output.as_text(), Some("Hello, Alice!"));
+
+// Tool outputs are text blocks that can grow large; insta snapshots help manage them:
+insta::assert_snapshot!(output, @"Hello, Alice!");
 # });
 ```
 
