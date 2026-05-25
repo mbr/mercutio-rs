@@ -1,14 +1,33 @@
-//! RFC 3339 timestamp type with LLM-friendly error messages.
+//! RFC 3339 timestamp type for MCP tool inputs.
 //!
-//! Provides [`Rfc3339`], a newtype over [`jiff::Timestamp`] designed for MCP tool inputs. RFC 3339
-//! is stricter than ISO 8601, reducing ambiguity for LLM-generated timestamps.
+//! [`Rfc3339`] is a newtype over [`jiff::Timestamp`]. Its [`JsonSchema`] implementation emits
+//! `format: "date-time"`, which is defined by JSON Schema and OpenAPI as RFC 3339. Models trained
+//! on API specs recognize this format natively.
 //!
-//! When deserialization fails, the error message includes the current time as an example, helping
-//! models self-correct:
+//! When parsing fails, the error includes the current time as an example, helping models
+//! self-correct:
 //!
 //! ```text
 //! invalid RFC 3339 timestamp '2025-05-25 14:30:00': failed to find ...
 //! Example: current time is 2025-05-25T14:30:00+02:00
+//! ```
+//!
+//! RFC 3339 is stricter than ISO 8601, requiring the `T` separator and timezone offset, which
+//! reduces ambiguity in LLM-generated timestamps.
+//!
+//! # Example
+//!
+//! ```
+//! use mercutio::Rfc3339;
+//!
+//! mercutio::tool_registry! {
+//!     enum Tools {
+//!         Schedule("schedule", "Schedule a meeting") {
+//!             /// Meeting start time.
+//!             start: Rfc3339,
+//!         },
+//!     }
+//! }
 //! ```
 
 use jiff::Timestamp;
@@ -17,12 +36,9 @@ use serde::{Deserialize, Serialize};
 
 /// RFC 3339 timestamp for MCP tool inputs.
 ///
-/// A transparent wrapper over [`jiff::Timestamp`] with LLM-friendly deserialization errors and
-/// JSON Schema support. Use this for tool parameters that accept timestamps.
-///
-/// # JSON Schema
-///
-/// Emits `{"type": "string", "format": "date-time"}`, the standard OpenAPI/JSON Schema format.
+/// A transparent wrapper over [`jiff::Timestamp`]. Emits `format: "date-time"` in JSON Schema,
+/// which is defined by JSON Schema and OpenAPI as RFC 3339. Deserialization errors include the
+/// current time as an example, helping models self-correct.
 ///
 /// # Example
 ///
