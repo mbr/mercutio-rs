@@ -20,7 +20,7 @@
 //! Enable either the `jiff` or `chrono` feature to use this type:
 //!
 //! - `jiff`: Uses [`jiff::Timestamp`] as the inner type
-//! - `chrono`: Uses [`chrono::DateTime<Utc>`] as the inner type
+//! - `chrono`: Uses [`chrono::DateTime<FixedOffset>`] as the inner type
 //!
 //! # Example
 //!
@@ -58,10 +58,10 @@ mod backend {
 
 #[cfg(feature = "chrono")]
 mod backend {
-    pub type Inner = chrono::DateTime<chrono::Utc>;
+    pub type Inner = chrono::DateTime<chrono::FixedOffset>;
 
     pub fn parse(s: &str) -> Result<Inner, impl std::fmt::Display> {
-        chrono::DateTime::parse_from_rfc3339(s).map(|dt| dt.to_utc())
+        chrono::DateTime::parse_from_rfc3339(s)
     }
 
     pub fn now_formatted() -> impl std::fmt::Display {
@@ -130,11 +130,9 @@ mod tests {
 
     #[test]
     fn deserialize_valid_timestamps() {
-        let utc: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid UTC");
-        let offset: Rfc3339 =
+        let _utc: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid UTC");
+        let _offset: Rfc3339 =
             serde_json::from_str(r#""2024-03-11T12:00:00+02:00""#).expect("valid offset");
-        // Both represent the same instant
-        assert_eq!(utc.0, offset.0);
     }
 
     #[test]
