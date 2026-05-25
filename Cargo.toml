@@ -15,7 +15,7 @@ jiff = ["dep:jiff"]
 chrono = ["dep:chrono"]
 
 [package.metadata.docs.rs]
-all-features = true
+features = ["io-stdlib", "io-tokio", "io-axum", "jiff"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
