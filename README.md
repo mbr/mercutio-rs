@@ -12,7 +12,7 @@ Use `tool_registry!` to define your tools. Field doc comments become JSON Schema
 mercutio::tool_registry! {
     enum MyTools {
         GetWeather("get_weather", "Gets current weather for a city") {
-            /// City name, e.g. "San Francisco".
+            /// City name, e.g. "Llanfair­pwllgwyngyll­gogery­chwyrn­drobwll­llan­tysilio­gogo­goch".
             city: String,
         },
         SetReminder("set_reminder", "Sets a reminder") {
