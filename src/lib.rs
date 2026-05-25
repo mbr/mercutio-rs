@@ -2,6 +2,7 @@
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
 mod config;
+mod rfc3339;
 mod tools;
 
 pub mod io;
@@ -10,6 +11,7 @@ use std::{fmt, marker::PhantomData, mem};
 
 pub use config::McpServerBuilder;
 use config::ServerConfig;
+pub use rfc3339::Rfc3339;
 /// Re-export of the MCP schema types.
 ///
 /// Use these with [`ToolOutput::content`] to construct content blocks not covered by the
