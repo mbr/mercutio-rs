@@ -7,9 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-25
+
 ### Added
 
 - Blanket `ToolRegistry` impl for any `ToolDef`, enabling single-tool servers without a registry enum.
+- `ToolOutput::content_blocks()`, `structured_content()`, and `as_text()` accessors for testing.
 
 ## [0.7.1] - 2026-05-25
 
@@ -145,7 +148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio/compare/0.7.1...HEAD
+[Unreleased]: https://github.com/mbr/mercutio/compare/0.7.2...HEAD
+[0.7.2]: https://github.com/mbr/mercutio/compare/0.7.1...0.7.2
 [0.7.1]: https://github.com/mbr/mercutio/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/mbr/mercutio/compare/0.6.4...0.7.0
 [0.6.4]: https://github.com/mbr/mercutio/compare/0.6.3...0.6.4
