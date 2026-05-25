@@ -123,6 +123,58 @@ let app = axum::Router::new().nest("/mcp", router);
 
 For custom session storage, use `McpRouter::builder()` with `.storage()`.
 
+## Testing
+
+To test your handler, construct it with test fixtures and call `handle` directly:
+
+```rust
+use mercutio::{ToolOutput, ToolRegistry, io::ToolHandler};
+
+mercutio::tool_registry! {
+    enum Tools {
+        Greet("greet", "Greets someone") {
+            name: String,
+        },
+    }
+}
+
+struct Handler;
+
+impl ToolHandler<Tools> for Handler {
+    type Error = std::convert::Infallible;
+
+    async fn handle(&self, _: Option<mercutio::io::McpSessionId>, tool: Tools) -> Result<ToolOutput, Self::Error> {
+        match tool {
+            Tools::Greet(g) => Ok(format!("Hello, {}!", g.name).into()),
+        }
+    }
+}
+
+# let rt = tokio::runtime::Runtime::new().unwrap();
+# rt.block_on(async {
+let handler = Handler;
+let tool = Tools::Greet(Greet { name: "Alice".into() });
+
+let output = handler.handle(None, tool).await.expect("handler failed");
+assert!(output.to_string().contains("Alice"));
+# });
+```
+
+To test that invalid inputs produce useful error messages, use [`ToolRegistry::parse`]:
+
+```rust
+use mercutio::ToolRegistry;
+
+mercutio::tool_registry! {
+    enum Tools {
+        Greet("greet", "Greets someone") { name: String },
+    }
+}
+
+let err = Tools::parse("greet", serde_json::json!({})).err().expect("should fail");
+assert!(err.to_string().contains("name"));
+```
+
 ### Example
 
 A complete server supporting both transports:
