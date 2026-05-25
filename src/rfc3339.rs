@@ -37,6 +37,8 @@
 //! }
 //! ```
 
+use std::fmt;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +123,12 @@ impl JsonSchema for Rfc3339 {
             ..Default::default()
         }
         .into()
+    }
+}
+
+impl fmt::Display for Rfc3339 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
 
