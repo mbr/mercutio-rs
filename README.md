@@ -8,7 +8,7 @@ This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run i
 
 Use `tool_registry!` to define your tools. Field doc comments become JSON Schema descriptions that the LLM sees:
 
-```rust,no_run
+```rust,ignore
 mercutio::tool_registry! {
     enum MyTools {
         GetWeather("get_weather", "Gets current weather for a city") {
@@ -18,12 +18,16 @@ mercutio::tool_registry! {
         SetReminder("set_reminder", "Sets a reminder") {
             /// What to remind about.
             message: String,
-            /// Minutes from now.
-            minutes: u32,
+            /// When to trigger the reminder.
+            at: mercutio::Rfc3339,
+            /// Minutes to wait before reminding again.
+            snooze_minutes: u32,
         },
     }
 }
 ```
+
+`Rfc3339` requires either the `jiff` or `chrono` feature. It emits `format: "date-time"` in JSON Schema, and deserialization errors include the current time as an example to help models self-correct.
 
 ## Sans-IO Usage
 
@@ -46,7 +50,7 @@ loop {
         Output::ToolCall { tool, responder } => {
             let result = match tool {
                 MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city),
-                MyTools::SetReminder(input) => format!("Reminder: {} in {} min", input.message, input.minutes),
+                MyTools::SetReminder(input) => format!("Reminder set: {}", input.message),
             };
             send(responder.respond(Ok::<_, std::convert::Infallible>(result)).into_inner());
         }
@@ -78,7 +82,7 @@ impl ToolHandler<MyTools> for MyHandler {
                 Ok(format!("Weather in {}: sunny", input.city).into())
             }
             MyTools::SetReminder(input) => {
-                Ok(format!("Reminder: {} in {} min", input.message, input.minutes).into())
+                Ok(format!("Reminder set: {}", input.message).into())
             }
         }
     }
@@ -184,5 +188,5 @@ async fn main() -> anyhow::Result<()> {
 | `io-stdlib` | Synchronous stdin/stdout transport |
 | `io-tokio` | Async stdin/stdout transport (Tokio) |
 | `io-axum` | HTTP transport (Axum) with session management |
-| `jiff` | RFC 3339 timestamp type using jiff (mutually exclusive with `chrono`) |
-| `chrono` | RFC 3339 timestamp type using chrono (mutually exclusive with `jiff`) |
+| `jiff` | `Rfc3339` timestamp type using jiff (mutually exclusive with `chrono`) |
+| `chrono` | `Rfc3339` timestamp type using chrono (mutually exclusive with `jiff`) |
