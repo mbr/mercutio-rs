@@ -685,9 +685,19 @@ fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
 
 /// Registry of available tools.
 ///
-/// Implemented by enums representing the set of tools a server supports. Each variant
-/// corresponds to a tool and contains its parsed input. The
-/// [`tool_registry`](crate::tool_registry) macro generates this implementation automatically.
+/// Typically implemented by enums representing the set of tools a server supports, where each
+/// variant corresponds to a tool and contains its parsed input. The [`tool_registry`] macro
+/// generates this implementation automatically.
+///
+/// For testing individual tools, any [`ToolDef`] can be used directly as a single-tool registry
+/// via the blanket impl, without needing to define a registry enum:
+///
+/// ```ignore
+/// let server = McpServer::<GetWeather>::builder()
+///     .name("test-server")
+///     .version("1.0")
+///     .build();
+/// ```
 pub trait ToolRegistry: Sized {
     /// Whether tools are enabled. Used to advertise tool capabilities during init.
     const ENABLED: bool = true;
@@ -717,6 +727,24 @@ impl ToolRegistry for NoTools {
 
     fn definitions() -> ToolDefinitions {
         ToolDefinitions::new(vec![])
+    }
+}
+
+impl<T: ToolDef> ToolRegistry for T {
+    fn parse(name: &str, arguments: serde_json::Value) -> std::result::Result<Self, JsonRpcError> {
+        if name == T::NAME {
+            serde_json::from_value(arguments).map_err(|e| JsonRpcError::InvalidParams {
+                msg: format!("{}: {e}", T::NAME),
+            })
+        } else {
+            Err(JsonRpcError::MethodNotFound {
+                msg: format!("unknown tool: {name}"),
+            })
+        }
+    }
+
+    fn definitions() -> ToolDefinitions {
+        ToolDefinitions::new(vec![ToolDefinition::from_tool::<T>()])
     }
 }
 
