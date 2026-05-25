@@ -113,11 +113,16 @@ Example: current time is [timestamp]
     }
 
     #[test]
-    fn json_schema_format() {
-        use schemars::schema_for;
-        let schema = schema_for!(Rfc3339);
-        let json = serde_json::to_value(&schema).expect("schema serializes");
-        assert_eq!(json["type"], "string");
-        assert_eq!(json["format"], "date-time");
+    fn json_schema() {
+        let schema = schemars::schema_for!(Rfc3339);
+        let json = serde_json::to_string_pretty(&schema).expect("schema serializes");
+        insta::assert_snapshot!(json, @r#"
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Rfc3339",
+  "type": "string",
+  "format": "date-time"
+}
+"#);
     }
 }
