@@ -47,27 +47,41 @@ compile_error!("features `jiff` and `chrono` are mutually exclusive");
 
 #[cfg(feature = "jiff")]
 mod backend {
+    use std::fmt;
+
     pub type Inner = jiff::Timestamp;
 
-    pub fn parse(s: &str) -> Result<Inner, impl std::fmt::Display> {
+    pub fn parse(s: &str) -> Result<Inner, impl fmt::Display> {
         s.parse::<jiff::Timestamp>()
     }
 
-    pub fn now_formatted() -> impl std::fmt::Display {
+    pub fn now_formatted() -> impl fmt::Display {
         jiff::Timestamp::now().strftime("%Y-%m-%dT%H:%M:%S%:z")
+    }
+
+    pub fn format(ts: &Inner, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(ts, f)
     }
 }
 
 #[cfg(feature = "chrono")]
 mod backend {
+    use std::fmt;
+
+    use chrono::SecondsFormat;
+
     pub type Inner = chrono::DateTime<chrono::FixedOffset>;
 
-    pub fn parse(s: &str) -> Result<Inner, impl std::fmt::Display> {
+    pub fn parse(s: &str) -> Result<Inner, impl fmt::Display> {
         chrono::DateTime::parse_from_rfc3339(s)
     }
 
-    pub fn now_formatted() -> impl std::fmt::Display {
+    pub fn now_formatted() -> impl fmt::Display {
         chrono::Utc::now().format("%Y-%m-%dT%H:%M:%S%:z")
+    }
+
+    pub fn format(ts: &Inner, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&ts.to_rfc3339_opts(SecondsFormat::AutoSi, true))
     }
 }
 
@@ -128,19 +142,39 @@ impl JsonSchema for Rfc3339 {
 
 impl fmt::Display for Rfc3339 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.0.fmt(f)
+        backend::format(&self.0, f)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Rfc3339;
+    use super::{Rfc3339, backend};
 
     #[test]
     fn deserialize_valid_timestamps() {
         let _utc: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid UTC");
         let _offset: Rfc3339 =
             serde_json::from_str(r#""2024-03-11T12:00:00+02:00""#).expect("valid offset");
+    }
+
+    #[test]
+    fn display_outputs_valid_rfc3339() {
+        let cases = [
+            r#""2024-03-11T10:00:00Z""#,
+            r#""2024-03-11T12:00:00+02:00""#,
+            r#""2024-12-31T23:59:59-05:00""#,
+            r#""2000-01-01T00:00:00+00:00""#,
+        ];
+        for input in cases {
+            let ts: Rfc3339 = serde_json::from_str(input).expect("valid input");
+            let displayed = ts.to_string();
+            backend::parse(&displayed).unwrap_or_else(|e| {
+                panic!(
+                    "Display output '{}' is not valid RFC 3339: {}",
+                    displayed, e
+                )
+            });
+        }
     }
 
     #[test]
