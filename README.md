@@ -184,3 +184,5 @@ async fn main() -> anyhow::Result<()> {
 | `io-stdlib` | Synchronous stdin/stdout transport |
 | `io-tokio` | Async stdin/stdout transport (Tokio) |
 | `io-axum` | HTTP transport (Axum) with session management |
+| `jiff` | RFC 3339 timestamp type using jiff (mutually exclusive with `chrono`) |
+| `chrono` | RFC 3339 timestamp type using chrono (mutually exclusive with `jiff`) |
