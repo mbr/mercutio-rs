@@ -45,7 +45,23 @@ fn macro_generates_valid_registry() {
 #[test]
 fn macro_generated_tools_work_with_server() {
     let mut server = initialized_server();
-    let call = r#"{"jsonrpc":"2.0","id":"2","method":"tools/call","params":{"name":"get_weather","arguments":{"city":"Berlin"}}}"#;
+
+    let list = r#"{"jsonrpc":"2.0","id":"2","method":"tools/list"}"#;
+    let Output::Send(response) = server.handle(parse_line(list).expect("valid tool list request"))
+    else {
+        panic!("expected tool list response");
+    };
+    let response = serde_json::to_value(response.into_inner()).expect("serializable response");
+    assert_eq!(
+        response["result"]["tools"].as_array().map(Vec::len),
+        Some(2)
+    );
+    assert_eq!(
+        response["result"]["tools"][0]["inputSchema"]["properties"]["city"]["type"],
+        "string"
+    );
+
+    let call = r#"{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"get_weather","arguments":{"city":"Berlin"}}}"#;
     let msg = parse_line(call).expect("valid json");
     let output = server.handle(msg);
 
@@ -64,7 +80,7 @@ fn macro_generated_tools_work_with_server() {
         _ => panic!("expected ToolCall"),
     }
 
-    let call = r#"{"jsonrpc":"2.0","id":"3","method":"tools/call","params":{"name":"ping"}}"#;
+    let call = r#"{"jsonrpc":"2.0","id":"4","method":"tools/call","params":{"name":"ping"}}"#;
     let output = server.handle(parse_line(call).expect("valid argument-free tool request"));
     assert!(matches!(
         output,

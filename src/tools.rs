@@ -46,7 +46,11 @@
 //! ```
 //!
 
-use std::{collections::BTreeMap, fmt, ops::Index};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    ops::Index,
+};
 
 use base64::Engine;
 use rust_mcp_schema::{
@@ -487,37 +491,70 @@ pub struct ToolDefinition {
     pub description: String,
     /// JSON Schema for the input parameters.
     pub input_schema: ToolInputSchema,
+    /// Definitions required by recursive input types.
+    input_schema_definitions: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolDefinition {
     /// Creates a definition from a type implementing [`ToolDef`].
     pub fn from_tool<T: ToolDef>() -> Self {
-        let settings = schemars::r#gen::SchemaSettings::draft07().with(|s| {
-            s.option_add_null_type = false;
+        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
+            // Inline ordinary nested types to keep tool declarations compact. Schemars retains
+            // definitions only when a recursive type cannot be represented without references.
+            settings.inline_subschemas = true;
+            settings.meta_schema = None;
         });
         let schema = settings.into_generator().into_root_schema_for::<T>();
-        let json = serde_json::to_value(&schema).expect("schema serialization failed");
-        let input_schema = convert_schema_to_tool_input(&json);
+        let mut json = serde_json::to_value(&schema).expect("schema serialization failed");
+        // Mercutio has historically represented `Option<T>` as an omitted property rather than
+        // also advertising `null`, which keeps model-facing schemas smaller without changing
+        // deserialization. Schemars 1 no longer exposes a generator setting for this policy.
+        compact_optional_properties(&mut json);
+        let (input_schema, input_schema_definitions) = convert_schema_to_tool_input(&json);
         Self {
             name: T::NAME.to_string(),
             description: T::DESCRIPTION.to_string(),
             input_schema,
+            input_schema_definitions,
         }
     }
 
-    /// Converts to the MCP schema [`Tool`](rust_mcp_schema::Tool) type.
-    pub fn into_mcp_tool(self) -> rust_mcp_schema::Tool {
-        rust_mcp_schema::Tool {
+    /// Converts to the serialized MCP tool representation.
+    pub fn into_mcp_tool(self) -> serde_json::Value {
+        let Self {
+            name,
+            description,
+            input_schema,
+            input_schema_definitions,
+        } = self;
+        let tool = rust_mcp_schema::Tool {
             annotations: None,
-            description: Some(self.description),
+            description: Some(description),
             execution: None,
             icons: Vec::new(),
-            input_schema: self.input_schema,
+            input_schema,
             meta: None,
-            name: self.name,
+            name,
             output_schema: None,
             title: None,
+        };
+        let mut value = serde_json::to_value(tool).expect("Tool serialization failed");
+
+        if !input_schema_definitions.is_empty() {
+            // The generated MCP 2025-11-25 type cannot store additional JSON Schema keywords,
+            // although the wire schema permits them. Merge the rare recursive definitions only
+            // at this serialization boundary instead of maintaining duplicate protocol types.
+            value
+                .get_mut("inputSchema")
+                .and_then(serde_json::Value::as_object_mut)
+                .expect("Tool input schema must be an object")
+                .insert(
+                    "$defs".into(),
+                    serde_json::Value::Object(input_schema_definitions),
+                );
         }
+
+        value
     }
 }
 
@@ -668,14 +705,99 @@ impl fmt::Display for ToolDefinitions {
     }
 }
 
-/// Converts a schemars JSON Schema to MCP's [`ToolInputSchema`].
-///
-/// MCP tools use standard JSON Schema for `inputSchema`. We use `schemars` to derive schemas from
-/// Rust types, but [`ToolInputSchema`] only models the schema dialect, `properties`, and `required`,
-/// discarding metadata like `title` and `definitions`. This breaks nested struct types since
-/// schemars emits `$ref` pointers into the discarded `definitions`. Workaround: annotate nested
-/// types with `#[schemars(inline)]` to force inlining, or keep tool inputs flat.
-fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
+/// Removes the redundant `null` form from optional object properties.
+fn compact_optional_properties(schema: &mut serde_json::Value) {
+    let serde_json::Value::Object(object) = schema else {
+        return;
+    };
+
+    let required = object
+        .get("required")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(String::from)
+        .collect::<BTreeSet<_>>();
+
+    if let Some(serde_json::Value::Object(properties)) = object.get_mut("properties") {
+        for (name, property) in properties {
+            if !required.contains(name) {
+                remove_null_variant(property);
+            }
+        }
+    }
+
+    for value in object.values_mut() {
+        match value {
+            serde_json::Value::Array(values) => {
+                for value in values {
+                    compact_optional_properties(value);
+                }
+            }
+            serde_json::Value::Object(_) => compact_optional_properties(value),
+            _ => {}
+        }
+    }
+}
+
+/// Removes `null` from one property schema while preserving its annotations.
+fn remove_null_variant(schema: &mut serde_json::Value) {
+    let serde_json::Value::Object(object) = schema else {
+        return;
+    };
+
+    if let Some(serde_json::Value::Array(types)) = object.get_mut("type") {
+        types.retain(|value| value.as_str() != Some("null"));
+        match types.len() {
+            0 => {
+                object.remove("type");
+                object.insert("not".into(), serde_json::json!({}));
+            }
+            1 => {
+                let remaining = types.pop().expect("one schema type remains");
+                object.insert("type".into(), remaining);
+            }
+            _ => {}
+        }
+    }
+
+    let Some(serde_json::Value::Array(mut choices)) = object.remove("anyOf") else {
+        return;
+    };
+    choices.retain(|choice| {
+        choice.as_object().is_none_or(|choice| {
+            choice.get("type").and_then(serde_json::Value::as_str) != Some("null")
+        })
+    });
+
+    if choices.is_empty() {
+        object.insert("not".into(), serde_json::json!({}));
+        return;
+    }
+
+    if choices.len() == 1 {
+        let remaining = choices.pop().expect("one schema choice remains");
+        let can_merge = remaining
+            .as_object()
+            .is_some_and(|remaining| remaining.keys().all(|key| !object.contains_key(key)));
+        if can_merge {
+            let serde_json::Value::Object(remaining) = remaining else {
+                unreachable!("mergeable schema choice must be an object");
+            };
+            object.extend(remaining);
+            return;
+        }
+        choices.push(remaining);
+    }
+
+    object.insert("anyOf".into(), serde_json::Value::Array(choices));
+}
+
+/// Converts a generated JSON Schema to its compact MCP representation.
+fn convert_schema_to_tool_input(
+    schema: &serde_json::Value,
+) -> (ToolInputSchema, serde_json::Map<String, serde_json::Value>) {
     let required = schema
         .get("required")
         .and_then(|r| r.as_array())
@@ -698,12 +820,16 @@ fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
                 .collect::<BTreeMap<_, _>>()
         });
 
-    let dialect = schema
-        .get("$schema")
-        .and_then(serde_json::Value::as_str)
-        .map(String::from);
+    let definitions = schema
+        .get("$defs")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
 
-    ToolInputSchema::new(required, properties, dialect)
+    (
+        ToolInputSchema::new(required, properties, None),
+        definitions,
+    )
 }
 
 /// Registry of available tools.
@@ -779,20 +905,7 @@ impl<T: ToolDef> ToolRegistry for T {
 /// Doc comments (`///`) on struct fields become JSON Schema descriptions, which are sent to
 /// clients during `tools/list` and help the LLM understand how to use each parameter.
 ///
-/// # Nested Types
-///
-/// Field types that are custom structs must be annotated with `#[schemars(inline)]`, otherwise
-/// the generated JSON Schema will contain unresolved `$ref` pointers. Enums and primitive types
-/// work without this annotation.
-///
-/// ```ignore
-/// #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
-/// #[schemars(inline)]  // Required for nested struct types
-/// struct Location {
-///     city: String,
-///     country: String,
-/// }
-/// ```
+/// Nested input types are inlined automatically; recursive types retain local schema definitions.
 ///
 /// # Example
 ///
@@ -1058,6 +1171,142 @@ mod tests {
     }
 
     #[test]
+    fn nested_tool_definition_schema_json() {
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        #[serde(rename_all = "lowercase")]
+        enum OutputFormat {
+            Text,
+            Json,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct Filters {
+            /// Maximum number of results.
+            limit: u32,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct ComplexInput {
+            /// Output format.
+            format: OutputFormat,
+            /// Result filters.
+            filters: Filters,
+        }
+
+        impl super::ToolDef for ComplexInput {
+            const NAME: &'static str = "complex";
+            const DESCRIPTION: &'static str = "Complex tool";
+        }
+
+        let tool = ToolDefinition::from_tool::<ComplexInput>().into_mcp_tool();
+        let input_schema = &tool["inputSchema"];
+        insta::assert_snapshot!(serde_json::to_string_pretty(input_schema).expect("formatting failed"), @r#"
+        {
+          "properties": {
+            "filters": {
+              "description": "Result filters.",
+              "properties": {
+                "limit": {
+                  "description": "Maximum number of results.",
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                }
+              },
+              "required": [
+                "limit"
+              ],
+              "type": "object"
+            },
+            "format": {
+              "description": "Output format.",
+              "enum": [
+                "text",
+                "json"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "format",
+            "filters"
+          ],
+          "type": "object"
+        }
+        "#);
+    }
+
+    #[test]
+    fn recursive_tool_definition_schema_json() {
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct Node {
+            value: String,
+            next: Option<Box<Node>>,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
+        struct RecursiveInput {
+            root: Node,
+        }
+
+        impl super::ToolDef for RecursiveInput {
+            const NAME: &'static str = "recursive";
+            const DESCRIPTION: &'static str = "Recursive tool";
+        }
+
+        let tool = ToolDefinition::from_tool::<RecursiveInput>().into_mcp_tool();
+        let input_schema = &tool["inputSchema"];
+        insta::assert_snapshot!(
+            serde_json::to_string_pretty(input_schema).expect("formatting failed"),
+            @r##"
+        {
+          "$defs": {
+            "Node": {
+              "properties": {
+                "next": {
+                  "$ref": "#/$defs/Node"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "type": "object"
+            }
+          },
+          "properties": {
+            "root": {
+              "properties": {
+                "next": {
+                  "$ref": "#/$defs/Node"
+                },
+                "value": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "value"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "root"
+          ],
+          "type": "object"
+        }
+        "##
+        );
+    }
+
+    #[test]
     fn tool_definition_schema_json() {
         #[allow(dead_code)]
         #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
@@ -1077,12 +1326,11 @@ mod tests {
         let json = serde_json::to_value(&def.input_schema).expect("serialization failed");
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).expect("formatting failed"), @r#"
         {
-          "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
             "count": {
               "description": "Optional field.",
               "format": "uint32",
-              "minimum": 0.0,
+              "minimum": 0,
               "type": "integer"
             },
             "name": {

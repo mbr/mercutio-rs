@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Upgrade the supported MCP protocol revision to `2025-11-25`.
+- Upgrade to Schemars 1.2 and automatically inline non-recursive tool input types, removing the need for `#[schemars(inline)]`; recursive schemas retain their required `$defs`.
+- `ToolDefinition::into_mcp_tool()` now returns the complete serialized representation so recursive schema definitions reach clients.
 - Report invalid tool inputs as tool execution errors so clients can present them to models for correction.
 
 ## [0.7.2] - 2026-05-25

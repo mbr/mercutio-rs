@@ -27,6 +27,8 @@ mercutio::tool_registry! {
 }
 ```
 
+Mercutio automatically inlines enums and non-recursive nested input types, keeping tool schemas compact without `#[schemars(inline)]`. Recursive inputs retain the local `$defs` they require.
+
 `Rfc3339` requires either the `jiff` or `chrono` feature. It emits `format: "date-time"` in JSON Schema, and deserialization errors include the current time as an example to help models self-correct.
 
 ## Sans-IO Usage

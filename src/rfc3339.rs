@@ -122,21 +122,19 @@ impl<'de> Deserialize<'de> for Rfc3339 {
 }
 
 impl JsonSchema for Rfc3339 {
-    fn schema_name() -> String {
-        "Rfc3339".to_string()
+    fn inline_schema() -> bool {
+        true
     }
 
-    fn is_referenceable() -> bool {
-        false
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "Rfc3339".into()
     }
 
-    fn json_schema(_gen: &mut schemars::r#gen::SchemaGenerator) -> schemars::schema::Schema {
-        schemars::schema::SchemaObject {
-            instance_type: Some(schemars::schema::InstanceType::String.into()),
-            format: Some("date-time".to_string()),
-            ..Default::default()
-        }
-        .into()
+    fn json_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "string",
+            "format": "date-time"
+        })
     }
 }
 
@@ -199,7 +197,7 @@ mod tests {
         let json = serde_json::to_string_pretty(&schema).expect("schema serializes");
         insta::assert_snapshot!(json, @r#"
 {
-  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Rfc3339",
   "type": "string",
   "format": "date-time"

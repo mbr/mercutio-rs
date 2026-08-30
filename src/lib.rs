@@ -24,8 +24,7 @@ pub use rust_mcp_schema;
 use rust_mcp_schema::{
     CallToolRequestParams, ClientCapabilities, INTERNAL_ERROR, INVALID_PARAMS, Implementation,
     InitializeRequestParams, InitializeResult, JsonrpcErrorResponse, JsonrpcMessage,
-    JsonrpcResultResponse, LATEST_PROTOCOL_VERSION, ListToolsResult, METHOD_NOT_FOUND, RequestId,
-    Result, RpcError,
+    JsonrpcResultResponse, LATEST_PROTOCOL_VERSION, METHOD_NOT_FOUND, RequestId, Result, RpcError,
 };
 #[doc(hidden)]
 pub use schemars;
@@ -440,18 +439,20 @@ impl<R: ToolRegistry> McpServer<R> {
 
     /// Handles a `tools/list` request.
     fn handle_tool_list(&self, id: RequestId) -> Output<R> {
-        let definitions = R::definitions();
-        let tools: Vec<_> = definitions.into_iter().map(|d| d.into_mcp_tool()).collect();
-        let result = ListToolsResult {
-            tools,
-            meta: None,
-            next_cursor: None,
-        };
-        let json_value = serde_json::to_value(result).expect("ListToolsResult serialization");
-        let extra = json_value.as_object().cloned();
+        // Tools stay as JSON values because the generated MCP 2025-11-25 input schema type cannot
+        // carry the `$defs` that `ToolDefinition` adds for rare recursive input types.
+        let tools = R::definitions()
+            .into_iter()
+            .map(ToolDefinition::into_mcp_tool)
+            .collect();
+        let mut extra = serde_json::Map::new();
+        extra.insert("tools".into(), serde_json::Value::Array(tools));
         Output::Send(OutgoingMessage::result_response(
             id,
-            Result { meta: None, extra },
+            Result {
+                meta: None,
+                extra: Some(extra),
+            },
         ))
     }
 
