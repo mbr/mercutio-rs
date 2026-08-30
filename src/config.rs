@@ -89,14 +89,18 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
             logging: None,
             prompts: None,
             resources: None,
+            tasks: None,
         };
 
         McpServer {
             config: ServerConfig {
                 info: Implementation {
+                    description: None,
+                    icons: Vec::new(),
                     name: self.name.clone(),
-                    version: self.version.clone(),
                     title: self.title.clone(),
+                    version: self.version.clone(),
+                    website_url: None,
                 },
                 capabilities,
                 instructions: self.instructions.clone(),

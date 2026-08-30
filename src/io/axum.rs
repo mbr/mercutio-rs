@@ -1,8 +1,8 @@
 //! Axum HTTP transport for MCP Streamable HTTP.
 //!
 //! Implements the
-//! [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#streamable-http)
-//! from MCP specification 2025-03-26. Provides session management and an axum router for handling
+//! [Streamable HTTP transport](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http)
+//! from MCP specification 2025-11-25. Provides session management and an axum router for handling
 //! MCP requests over HTTP.
 //!
 //! # Example
@@ -527,7 +527,7 @@ mod tests {
     async fn initialize_creates_session() {
         let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
         let response = router
             .oneshot(
@@ -557,7 +557,7 @@ mod tests {
     async fn subsequent_request_requires_session() {
         let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
-        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
         let init_response = router
             .clone()
@@ -642,7 +642,7 @@ mod tests {
     async fn delete_removes_session() {
         let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
 
-        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
 
         let init_response = router
             .clone()

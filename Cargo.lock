@@ -646,9 +646,9 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "rust-mcp-schema"
-version = "0.7.5"
+version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba217e6fcb043bba9e194209bff92c35294093187504d1443832ca2051816753"
+checksum = "5a66664d256795cdd61b7d4d6516d8afe041c947bedd1d10aff9e41e15771b43"
 dependencies = [
  "serde",
  "serde_json",

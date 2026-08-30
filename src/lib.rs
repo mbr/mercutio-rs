@@ -23,9 +23,9 @@ pub use rfc3339::Rfc3339;
 pub use rust_mcp_schema;
 use rust_mcp_schema::{
     CallToolRequestParams, ClientCapabilities, INTERNAL_ERROR, INVALID_PARAMS, Implementation,
-    InitializeRequestParams, InitializeResult, JsonrpcError, JsonrpcMessage, JsonrpcRequestParams,
-    JsonrpcResponse, LATEST_PROTOCOL_VERSION, ListToolsResult, METHOD_NOT_FOUND, RequestId, Result,
-    RpcError,
+    InitializeRequestParams, InitializeResult, JsonrpcErrorResponse, JsonrpcMessage,
+    JsonrpcResultResponse, LATEST_PROTOCOL_VERSION, ListToolsResult, METHOD_NOT_FOUND, RequestId,
+    Result, RpcError,
 };
 #[doc(hidden)]
 pub use schemars;
@@ -123,10 +123,15 @@ impl OutgoingMessage {
         &self.0
     }
 
+    /// Creates a success response.
+    fn result_response(id: RequestId, result: Result) -> Self {
+        let response = JsonrpcResultResponse::new(id, result);
+        Self(JsonrpcMessage::ResultResponse(response))
+    }
+
     /// Creates an empty success response.
     fn empty_response(id: RequestId) -> Self {
-        let response = JsonrpcResponse::new(id, Default::default());
-        Self(JsonrpcMessage::Response(response))
+        Self::result_response(id, Result::default())
     }
 }
 
@@ -178,8 +183,12 @@ impl Responder {
         let json_value =
             serde_json::to_value(&call_result).expect("CallToolResult serialization failed");
         let extra = json_value.as_object().cloned();
-        let response = JsonrpcResponse::new(self.id, Result { meta: None, extra });
-        OutgoingMessage(JsonrpcMessage::Response(response))
+        OutgoingMessage::result_response(self.id, Result { meta: None, extra })
+    }
+
+    /// Sends a tool execution error.
+    fn tool_error(self, error: impl fmt::Display) -> OutgoingMessage {
+        self.respond(std::result::Result::<ToolOutput, _>::Err(error))
     }
 
     /// Sends a JSON-RPC error response.
@@ -193,8 +202,8 @@ impl Responder {
             message: err.to_string(),
             data: None,
         };
-        let error_msg = JsonrpcError::new(rpc_error, self.id);
-        OutgoingMessage(JsonrpcMessage::Error(error_msg))
+        let error_response = JsonrpcErrorResponse::new(rpc_error, Some(self.id));
+        OutgoingMessage(JsonrpcMessage::ErrorResponse(error_response))
     }
 }
 
@@ -241,7 +250,8 @@ impl JsonRpcError {
             message: self.to_string(),
             data: None,
         };
-        OutgoingMessage(JsonrpcMessage::Error(JsonrpcError::new(error, id)))
+        let response = JsonrpcErrorResponse::new(error, Some(id));
+        OutgoingMessage(JsonrpcMessage::ErrorResponse(response))
     }
 }
 
@@ -294,10 +304,9 @@ pub fn parse_line(line: &str) -> std::result::Result<JsonrpcMessage, ParseError>
 
 /// Parses JSON-RPC request params into a typed struct.
 fn parse_params<T: serde::de::DeserializeOwned>(
-    params: Option<JsonrpcRequestParams>,
+    params: Option<serde_json::Map<String, serde_json::Value>>,
 ) -> std::result::Result<T, serde_json::Error> {
-    let params_value = params.and_then(|p| p.extra).unwrap_or_default();
-    serde_json::from_value(serde_json::Value::Object(params_value))
+    serde_json::from_value(serde_json::Value::Object(params.unwrap_or_default()))
 }
 
 impl<R: ToolRegistry> McpServer<R> {
@@ -369,7 +378,7 @@ impl<R: ToolRegistry> McpServer<R> {
     fn handle_initialize(
         &mut self,
         id: RequestId,
-        params: Option<JsonrpcRequestParams>,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> std::result::Result<Output<R>, JsonRpcError> {
         let params: InitializeRequestParams =
             parse_params(params).map_err(|e| JsonRpcError::InvalidParams {
@@ -395,34 +404,37 @@ impl<R: ToolRegistry> McpServer<R> {
 
         let json_value = serde_json::to_value(result).expect("InitializeResult serialization");
         let extra = json_value.as_object().cloned();
-        let response = JsonrpcResponse::new(id, Result { meta: None, extra });
-        Ok(Output::Send(OutgoingMessage(JsonrpcMessage::Response(
-            response,
-        ))))
+        Ok(Output::Send(OutgoingMessage::result_response(
+            id,
+            Result { meta: None, extra },
+        )))
     }
 
     /// Handles a `tools/call` request.
     fn handle_tool_call(
         &self,
         id: RequestId,
-        params: Option<JsonrpcRequestParams>,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> std::result::Result<Output<R>, JsonRpcError> {
         let params: CallToolRequestParams =
             parse_params(params).map_err(|e| JsonRpcError::InvalidParams {
                 msg: format!("tools/call: {e}"),
             })?;
 
-        let arguments = params
-            .arguments
-            .map(serde_json::Value::Object)
-            .unwrap_or(serde_json::Value::Null);
+        let arguments = serde_json::Value::Object(params.arguments.unwrap_or_default());
 
         match R::parse(&params.name, arguments) {
             Ok(tool) => Ok(Output::ToolCall {
                 tool,
                 responder: Responder::new(id),
             }),
-            Err(e) => Ok(Output::Send(e.into_response(id))),
+            Err(JsonRpcError::MethodNotFound { msg }) => Ok(Output::Send(
+                JsonRpcError::InvalidParams { msg }.into_response(id),
+            )),
+            Err(error @ JsonRpcError::InvalidParams { .. }) => {
+                Ok(Output::Send(Responder::new(id).tool_error(error)))
+            }
+            Err(error) => Ok(Output::Send(error.into_response(id))),
         }
     }
 
@@ -437,8 +449,10 @@ impl<R: ToolRegistry> McpServer<R> {
         };
         let json_value = serde_json::to_value(result).expect("ListToolsResult serialization");
         let extra = json_value.as_object().cloned();
-        let response = JsonrpcResponse::new(id, Result { meta: None, extra });
-        Output::Send(OutgoingMessage(JsonrpcMessage::Response(response)))
+        Output::Send(OutgoingMessage::result_response(
+            id,
+            Result { meta: None, extra },
+        ))
     }
 
     /// Dispatches a request to the appropriate handler based on method and phase.
@@ -446,7 +460,7 @@ impl<R: ToolRegistry> McpServer<R> {
         &mut self,
         id: RequestId,
         method: &str,
-        params: Option<JsonrpcRequestParams>,
+        params: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> std::result::Result<Output<R>, JsonRpcError> {
         match (&mut self.phase, method) {
             (Phase::WaitingForInitialize, "initialize") => self.handle_initialize(id, params),
@@ -490,17 +504,15 @@ impl<R: ToolRegistry> fmt::Display for McpServer<R> {
 fn describe_message(msg: &JsonrpcMessage) -> String {
     match msg {
         JsonrpcMessage::Request(req) => format!("request:{}", req.method),
-        JsonrpcMessage::Response(_) => "response".into(),
+        JsonrpcMessage::ResultResponse(_) => "response".into(),
         JsonrpcMessage::Notification(notif) => format!("notification:{}", notif.method),
-        JsonrpcMessage::Error(_) => "error".into(),
+        JsonrpcMessage::ErrorResponse(_) => "error".into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use rust_mcp_schema::{
-        JsonrpcMessage, JsonrpcNotification, JsonrpcRequest, JsonrpcRequestParams, RequestId,
-    };
+    use rust_mcp_schema::{JsonrpcMessage, JsonrpcNotification, JsonrpcRequest, RequestId};
 
     use crate::{McpServer, NoTools, Output};
 
@@ -511,19 +523,15 @@ mod tests {
             .build()
     }
 
-    fn initialize_params() -> JsonrpcRequestParams {
-        let extra: serde_json::Map<String, serde_json::Value> = serde_json::from_str(
+    fn initialize_params() -> serde_json::Map<String, serde_json::Value> {
+        serde_json::from_str(
             r#"{
-                "protocolVersion": "2025-06-18",
+                "protocolVersion": "2025-11-25",
                 "capabilities": {},
                 "clientInfo": { "name": "test-client", "version": "1.0" }
             }"#,
         )
-        .expect("valid JSON");
-        JsonrpcRequestParams {
-            meta: None,
-            extra: Some(extra),
-        }
+        .expect("valid JSON")
     }
 
     #[test]
@@ -574,7 +582,7 @@ mod tests {
         let output = server.handle(list_req);
         match output {
             Output::Send(msg) => {
-                assert!(matches!(msg.as_inner(), JsonrpcMessage::Error(_)));
+                assert!(matches!(msg.as_inner(), JsonrpcMessage::ErrorResponse(_)));
             }
             _ => panic!("expected Send with error"),
         }
@@ -592,15 +600,12 @@ mod tests {
         let call_req = JsonrpcMessage::Request(JsonrpcRequest::new(
             RequestId::String("3".into()),
             "tools/call".into(),
-            Some(JsonrpcRequestParams {
-                meta: None,
-                extra: Some(call_params),
-            }),
+            Some(call_params),
         ));
         let output = server.handle(call_req);
         match output {
             Output::Send(msg) => {
-                assert!(matches!(msg.as_inner(), JsonrpcMessage::Error(_)));
+                assert!(matches!(msg.as_inner(), JsonrpcMessage::ErrorResponse(_)));
             }
             _ => panic!("expected Send with error"),
         }

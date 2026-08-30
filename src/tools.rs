@@ -45,21 +45,8 @@
 //! }
 //! ```
 //!
-//! For raw JSON schema snapshots, note that [`ToolInputSchema`] uses `HashMap` internally, causing
-//! non-deterministic key ordering. Serialize via [`serde_json::to_value`] first to convert to
-//! `serde_json::Map` (BTreeMap-backed) for stable output:
-//!
-//! ```ignore
-//! let def = ToolDefinition::from_tool::<MyTool>();
-//! let json = serde_json::to_value(&def.input_schema).unwrap();
-//! insta::assert_snapshot!(serde_json::to_string_pretty(&json).unwrap());
-//! ```
-//!
-//! This workaround only affects snapshot testing; the actual MCP wire protocol still serializes
-//! with non-deterministic key order. See <https://github.com/rust-mcp-stack/rust-mcp-schema/pull/105>
-//! for the upstream fix.
 
-use std::{collections::HashMap, fmt, ops::Index};
+use std::{collections::BTreeMap, fmt, ops::Index};
 
 use base64::Engine;
 use rust_mcp_schema::{
@@ -244,7 +231,18 @@ impl ToolOutput {
     /// fetches it separately via `resources/read`.
     pub fn resource_link<U: Into<String>, N: Into<String>>(mut self, uri: U, name: N) -> Self {
         self.content.push(
-            ResourceLink::new(name.into(), uri.into(), None, None, None, None, None, None).into(),
+            ResourceLink::new(
+                Vec::new(),
+                name.into(),
+                uri.into(),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .into(),
         );
         self
     }
@@ -510,11 +508,13 @@ impl ToolDefinition {
     /// Converts to the MCP schema [`Tool`](rust_mcp_schema::Tool) type.
     pub fn into_mcp_tool(self) -> rust_mcp_schema::Tool {
         rust_mcp_schema::Tool {
-            name: self.name,
-            description: Some(self.description),
-            input_schema: self.input_schema,
             annotations: None,
+            description: Some(self.description),
+            execution: None,
+            icons: Vec::new(),
+            input_schema: self.input_schema,
             meta: None,
+            name: self.name,
             output_schema: None,
             title: None,
         }
@@ -671,10 +671,10 @@ impl fmt::Display for ToolDefinitions {
 /// Converts a schemars JSON Schema to MCP's [`ToolInputSchema`].
 ///
 /// MCP tools use standard JSON Schema for `inputSchema`. We use `schemars` to derive schemas from
-/// Rust types, but [`ToolInputSchema`] only models `properties` and `required`, discarding metadata
-/// like `$schema`, `title`, and `definitions`. This breaks nested struct types since schemars emits
-/// `$ref` pointers into the discarded `definitions`. Workaround: annotate nested types with
-/// `#[schemars(inline)]` to force inlining, or keep tool inputs flat.
+/// Rust types, but [`ToolInputSchema`] only models the schema dialect, `properties`, and `required`,
+/// discarding metadata like `title` and `definitions`. This breaks nested struct types since
+/// schemars emits `$ref` pointers into the discarded `definitions`. Workaround: annotate nested
+/// types with `#[schemars(inline)]` to force inlining, or keep tool inputs flat.
 fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
     let required = schema
         .get("required")
@@ -695,10 +695,15 @@ fn convert_schema_to_tool_input(schema: &serde_json::Value) -> ToolInputSchema {
                     let map = v.as_object().cloned().unwrap_or_default();
                     (k.clone(), map)
                 })
-                .collect::<HashMap<_, _>>()
+                .collect::<BTreeMap<_, _>>()
         });
 
-    ToolInputSchema::new(required, properties)
+    let dialect = schema
+        .get("$schema")
+        .and_then(serde_json::Value::as_str)
+        .map(String::from);
+
+    ToolInputSchema::new(required, properties, dialect)
 }
 
 /// Registry of available tools.
@@ -721,6 +726,9 @@ pub trait ToolRegistry: Sized {
     const ENABLED: bool = true;
 
     /// Parses a tool call into a typed enum variant.
+    ///
+    /// Returns [`JsonRpcError::MethodNotFound`] for an unknown tool and
+    /// [`JsonRpcError::InvalidParams`] when the named tool's input is invalid.
     fn parse(name: &str, arguments: serde_json::Value) -> std::result::Result<Self, JsonRpcError>;
 
     /// Returns tool definitions for `tools/list`.
@@ -1066,10 +1074,10 @@ mod tests {
         }
 
         let def = ToolDefinition::from_tool::<TestInput>();
-        // Serialize via `Value` to convert HashMap to BTreeMap-backed Map for stable key order.
         let json = serde_json::to_value(&def.input_schema).expect("serialization failed");
         insta::assert_snapshot!(serde_json::to_string_pretty(&json).expect("formatting failed"), @r#"
         {
+          "$schema": "http://json-schema.org/draft-07/schema#",
           "properties": {
             "count": {
               "description": "Optional field.",

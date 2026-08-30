@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade the supported MCP protocol revision to `2025-11-25`.
+- Report invalid tool inputs as tool execution errors so clients can present them to models for correction.
+
 ## [0.7.2] - 2026-05-25
 
 ### Added
