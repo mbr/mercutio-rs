@@ -1,8 +1,9 @@
 #!/bin/sh
 
-#: Runs tests with no features and all features.
+#: Runs tests with no features and each timestamp backend.
 
 set -e
 
 cargo test
-cargo test --all-features
+cargo test --features io-stdlib,io-tokio,io-axum,jiff
+cargo test --features io-stdlib,io-tokio,io-axum,chrono
