@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0-alpha.1] - 2026-08-30
+
 ### Added
 
 - Add the optional `cli` feature for exposing a `ToolRegistry` as schema-driven native commands, with typed and whole-input JSON parsing, synchronous and asynchronous runners, nested application commands, filesystem artifacts, structured JSON, raw MCP JSON, and decoded binary output.
@@ -161,21 +163,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio/compare/0.8.0...HEAD
-[0.8.0]: https://github.com/mbr/mercutio/compare/0.7.2...0.8.0
-[0.7.2]: https://github.com/mbr/mercutio/compare/0.7.1...0.7.2
-[0.7.1]: https://github.com/mbr/mercutio/compare/0.7.0...0.7.1
-[0.7.0]: https://github.com/mbr/mercutio/compare/0.6.4...0.7.0
-[0.6.4]: https://github.com/mbr/mercutio/compare/0.6.3...0.6.4
-[0.6.3]: https://github.com/mbr/mercutio/compare/0.6.2...0.6.3
-[0.6.2]: https://github.com/mbr/mercutio/compare/0.6.1...0.6.2
-[0.6.1]: https://github.com/mbr/mercutio/compare/0.6.0...0.6.1
-[0.6.0]: https://github.com/mbr/mercutio/compare/0.5.2...0.6.0
-[0.5.2]: https://github.com/mbr/mercutio/compare/0.5.1...0.5.2
-[0.5.1]: https://github.com/mbr/mercutio/compare/0.5.0...0.5.1
-[0.5.0]: https://github.com/mbr/mercutio/compare/0.4.1...0.5.0
-[0.4.1]: https://github.com/mbr/mercutio/compare/0.4.0...0.4.1
-[0.4.0]: https://github.com/mbr/mercutio/compare/0.3.0...0.4.0
-[0.3.0]: https://github.com/mbr/mercutio/compare/0.2.0...0.3.0
-[0.2.0]: https://github.com/mbr/mercutio/compare/0.1.0...0.2.0
-[0.1.0]: https://github.com/mbr/mercutio/releases/tag/0.1.0
+[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.1...HEAD
+[0.9.0-alpha.1]: https://github.com/mbr/mercutio-rs/compare/0.8.0...0.9.0-alpha.1
+[0.8.0]: https://github.com/mbr/mercutio-rs/compare/0.7.2...0.8.0
+[0.7.2]: https://github.com/mbr/mercutio-rs/compare/0.7.1...0.7.2
+[0.7.1]: https://github.com/mbr/mercutio-rs/compare/0.7.0...0.7.1
+[0.7.0]: https://github.com/mbr/mercutio-rs/compare/0.6.4...0.7.0
+[0.6.4]: https://github.com/mbr/mercutio-rs/compare/0.6.3...0.6.4
+[0.6.3]: https://github.com/mbr/mercutio-rs/compare/0.6.2...0.6.3
+[0.6.2]: https://github.com/mbr/mercutio-rs/compare/0.6.1...0.6.2
+[0.6.1]: https://github.com/mbr/mercutio-rs/compare/0.6.0...0.6.1
+[0.6.0]: https://github.com/mbr/mercutio-rs/compare/0.5.2...0.6.0
+[0.5.2]: https://github.com/mbr/mercutio-rs/compare/0.5.1...0.5.2
+[0.5.1]: https://github.com/mbr/mercutio-rs/compare/0.5.0...0.5.1
+[0.5.0]: https://github.com/mbr/mercutio-rs/compare/0.4.1...0.5.0
+[0.4.1]: https://github.com/mbr/mercutio-rs/compare/0.4.0...0.4.1
+[0.4.0]: https://github.com/mbr/mercutio-rs/compare/0.3.0...0.4.0
+[0.3.0]: https://github.com/mbr/mercutio-rs/compare/0.2.0...0.3.0
+[0.2.0]: https://github.com/mbr/mercutio-rs/compare/0.1.0...0.2.0
+[0.1.0]: https://github.com/mbr/mercutio-rs/releases/tag/0.1.0
