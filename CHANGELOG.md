@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-30
+
 ### Changed
 
 - Upgrade the supported MCP protocol revision to `2025-11-25`.
@@ -155,7 +157,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio/compare/0.7.2...HEAD
+[Unreleased]: https://github.com/mbr/mercutio/compare/0.8.0...HEAD
+[0.8.0]: https://github.com/mbr/mercutio/compare/0.7.2...0.8.0
 [0.7.2]: https://github.com/mbr/mercutio/compare/0.7.1...0.7.2
 [0.7.1]: https://github.com/mbr/mercutio/compare/0.7.0...0.7.1
 [0.7.0]: https://github.com/mbr/mercutio/compare/0.6.4...0.7.0
