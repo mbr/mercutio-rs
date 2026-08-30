@@ -1,9 +1,13 @@
 #![cfg(feature = "cli")]
 
-use std::{borrow::Cow, collections::BTreeMap, io::Cursor};
+use std::{
+    borrow::Cow,
+    collections::BTreeMap,
+    io::{self, Cursor, Write},
+};
 
 use mercutio::{
-    NoTools, ToolDef, ToolDefinition, ToolDefinitions, ToolRegistry,
+    NoTools, ToolDef, ToolDefinition, ToolDefinitions, ToolOutput, ToolRegistry,
     cli::{Cli, CliBuildProblem, CliErrorKind, OutputMode, ToolRegistryExt as _},
 };
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -386,6 +390,86 @@ fn parses_and_separates_supported_union_branches() {
     assert!(error.to_string().contains("cannot be combined"));
 }
 
+#[derive(Debug, Deserialize, PartialEq)]
+struct FallbackInput {
+    plain: String,
+    choice: serde_json::Value,
+    node: serde_json::Value,
+    hybrid: serde_json::Value,
+}
+
+impl JsonSchema for FallbackInput {
+    fn schema_name() -> Cow<'static, str> {
+        "FallbackInput".into()
+    }
+
+    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "plain": { "type": "string" },
+                "choice": {
+                    "anyOf": [
+                        { "type": "string" },
+                        { "type": "integer" }
+                    ]
+                },
+                "node": { "$ref": "#/$defs/Node" },
+                "hybrid": {
+                    "type": "object",
+                    "properties": { "fixed": { "type": "string" } },
+                    "additionalProperties": { "type": "string" }
+                }
+            },
+            "required": ["plain", "choice", "node", "hybrid"],
+            "$defs": {
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "value": { "type": "string" },
+                        "next": { "$ref": "#/$defs/Node" }
+                    },
+                    "required": ["value"]
+                }
+            }
+        })
+    }
+}
+
+impl ToolDef for FallbackInput {
+    const NAME: &'static str = "fallback";
+    const DESCRIPTION: &'static str = "Exercises localized JSON fallbacks";
+}
+
+#[test]
+fn keeps_typed_siblings_with_localized_json_fallbacks() {
+    let cli = FallbackInput::cli("fallbacks")
+        .build()
+        .expect("valid fallback CLI");
+    let input = cli
+        .try_parse_from(
+            [
+                "fallbacks",
+                "fallback",
+                "--plain",
+                "typed",
+                "--choice",
+                "42",
+                "--node",
+                r#"{"value":"root","next":{"value":"leaf"}}"#,
+                "--hybrid",
+                r#"{"fixed":"known","extra":"dynamic"}"#,
+            ],
+            Cursor::new(Vec::new()),
+        )
+        .expect("localized JSON values")
+        .into_tool();
+    assert_eq!(input.plain, "typed");
+    assert_eq!(input.choice, serde_json::json!(42));
+    assert_eq!(input.node["next"]["value"], "leaf");
+    assert_eq!(input.hybrid["extra"], "dynamic");
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 struct First;
 
@@ -433,8 +517,7 @@ fn reports_normalization_and_application_collisions() {
     let parent = clap::Command::new("app").subcommand(clap::Command::new("my-tools"));
     let error = generated
         .attach_to(parent)
-        .err()
-        .expect("application collision must fail");
+        .expect_err("application collision must fail");
     assert!(matches!(
         error.problems(),
         [CliBuildProblem::ApplicationCommandCollision { name }] if name == "my-tools"
@@ -470,4 +553,322 @@ fn help_and_version_are_stdout_control_flow() {
         assert_eq!(error.exit_code(), 0);
         assert!(!error.targets_stderr());
     }
+}
+
+fn minimal_search_args(output: &str) -> Vec<&str> {
+    vec![
+        "my-tools",
+        "--output",
+        output,
+        "search-items",
+        "--query",
+        "rust",
+        "--mode",
+        "fast",
+    ]
+}
+
+#[test]
+fn synchronous_runner_emits_structured_and_raw_json() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    cli()
+        .run_on(
+            minimal_search_args("structured"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |session, _tool| -> Result<ToolOutput, &str> {
+                assert!(session.is_none());
+                Ok(ToolOutput::new()
+                    .text("fallback")
+                    .structured(&serde_json::json!({"count": 2})))
+            },
+        )
+        .expect("structured runner");
+    assert_eq!(
+        stdout,
+        br#"{"count":2}
+"#
+    );
+    assert!(stderr.is_empty());
+
+    stdout.clear();
+    cli()
+        .run_on(
+            minimal_search_args("raw"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<ToolOutput, &str> {
+                Ok(ToolOutput::new()
+                    .text("fallback")
+                    .structured(&serde_json::json!({"count": 2})))
+            },
+        )
+        .expect("raw runner");
+    assert_eq!(
+        stdout,
+        br#"{"content":[{"text":"fallback","type":"text"}],"isError":false,"structuredContent":{"count":2}}
+"#
+    );
+}
+
+#[test]
+fn structured_and_handler_failures_write_no_stdout() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let missing = cli()
+        .run_on(
+            minimal_search_args("structured"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<&str, &str> { Ok("text only") },
+        )
+        .expect_err("missing structured content");
+    assert_eq!(missing.exit_code(), 1);
+    assert!(stdout.is_empty());
+
+    let handler = cli()
+        .run_on(
+            minimal_search_args("raw"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<&str, &str> { Err("domain failure") },
+        )
+        .expect_err("handler error");
+    assert_eq!(handler.kind(), CliErrorKind::Runtime);
+    assert!(handler.to_string().contains("domain failure"));
+    assert!(stdout.is_empty());
+}
+
+#[test]
+fn binary_output_separates_bytes_and_text() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    cli()
+        .run_on(
+            minimal_search_args("binary"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<ToolOutput, &str> {
+                Ok(ToolOutput::new()
+                    .text("generated image")
+                    .image(b"\x89PNG\r\n", "image/png"))
+            },
+        )
+        .expect("binary runner");
+    assert_eq!(stdout, b"\x89PNG\r\n");
+    assert_eq!(stderr, b"generated image\n");
+
+    stdout.clear();
+    stderr.clear();
+    let invalid = mercutio::rust_mcp_schema::ImageContent::new(
+        "not base64".into(),
+        "image/png".into(),
+        None,
+        None,
+    );
+    let error = cli()
+        .run_on(
+            minimal_search_args("binary"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<ToolOutput, &str> { Ok(ToolOutput::new().content(invalid)) },
+        )
+        .expect_err("invalid base64");
+    assert_eq!(error.exit_code(), 1);
+    assert!(stdout.is_empty());
+    assert!(stderr.is_empty());
+}
+
+#[test]
+fn artifact_output_creates_private_unique_files_and_forced_kitty() {
+    let parent = tempfile::tempdir().expect("temporary artifact parent");
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let args = vec![
+        "my-tools",
+        "--artifact-dir",
+        parent.path().to_str().expect("UTF-8 path"),
+        "--images",
+        "kitty",
+        "search-items",
+        "--query",
+        "rust",
+        "--mode",
+        "fast",
+    ];
+    cli()
+        .run_on(
+            args,
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            |_, _| -> Result<ToolOutput, &str> {
+                Ok(ToolOutput::new()
+                    .text("summary")
+                    .image(b"png", "image/png")
+                    .audio(b"wav", "audio/wav")
+                    .embedded_blob(b"pdf", "file:///report.pdf", "application/pdf")
+                    .embedded_text("notes", "file:///notes.txt", Some("text/plain"))
+                    .resource_link("file:///source", "source")
+                    .structured(&serde_json::json!({"ok": true})))
+            },
+        )
+        .expect("artifact runner");
+    assert!(stderr.is_empty());
+    let rendered = String::from_utf8(stdout).expect("text output");
+    assert!(rendered.contains("\u{1b}_Ga=T,f=100,m=0;"));
+    assert!(rendered.contains("[image:"));
+    assert!(rendered.contains("[audio:"));
+    assert!(rendered.contains("[embedded blob: file:///report.pdf ->"));
+    assert!(rendered.contains("[embedded text: file:///notes.txt (text/plain)]\nnotes"));
+    assert!(rendered.contains("[resource: source (file:///source)]"));
+    assert!(rendered.ends_with("{\n  \"ok\": true\n}\n"));
+
+    let directories = std::fs::read_dir(parent.path())
+        .expect("artifact parent")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("directory entries");
+    assert_eq!(directories.len(), 1);
+    let directory = directories[0].path();
+    assert!(directory.is_absolute());
+    assert_eq!(
+        std::fs::read(directory.join("image-1.png")).expect("image"),
+        b"png"
+    );
+    assert_eq!(
+        std::fs::read(directory.join("audio-2.wav")).expect("audio"),
+        b"wav"
+    );
+    assert_eq!(
+        std::fs::read(directory.join("blob-3.pdf")).expect("blob"),
+        b"pdf"
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        assert_eq!(
+            std::fs::metadata(&directory)
+                .expect("directory metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(directory.join("image-1.png"))
+                .expect("file metadata")
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+}
+
+#[test]
+fn text_only_artifacts_create_no_directory() {
+    let parent = tempfile::tempdir().expect("temporary artifact parent");
+    let mut stdout = Vec::new();
+    cli()
+        .run_on(
+            [
+                "my-tools",
+                "--artifact-dir",
+                parent.path().to_str().expect("UTF-8 path"),
+                "search-items",
+                "--query",
+                "rust",
+                "--mode",
+                "fast",
+            ],
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            Vec::new(),
+            |_, _| -> Result<&str, &str> { Ok("plain text") },
+        )
+        .expect("text artifact output");
+    assert_eq!(stdout, b"plain text\n");
+    assert_eq!(
+        std::fs::read_dir(parent.path())
+            .expect("artifact parent")
+            .count(),
+        0
+    );
+}
+
+struct FailingWriter;
+
+impl Write for FailingWriter {
+    fn write(&mut self, _buffer: &[u8]) -> io::Result<usize> {
+        Err(io::Error::other("injected write failure"))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+#[test]
+fn artifacts_survive_final_stdout_failure() {
+    let parent = tempfile::tempdir().expect("temporary artifact parent");
+    let error = cli()
+        .run_on(
+            [
+                "my-tools",
+                "--artifact-dir",
+                parent.path().to_str().expect("UTF-8 path"),
+                "search-items",
+                "--query",
+                "rust",
+                "--mode",
+                "fast",
+            ],
+            Cursor::new(Vec::new()),
+            FailingWriter,
+            Vec::new(),
+            |_, _| -> Result<ToolOutput, &str> { Ok(ToolOutput::new().image(b"png", "image/png")) },
+        )
+        .expect_err("stdout failure");
+    assert_eq!(error.exit_code(), 1);
+    let directory = std::fs::read_dir(parent.path())
+        .expect("artifact parent")
+        .next()
+        .expect("retained invocation directory")
+        .expect("directory entry")
+        .path();
+    assert_eq!(
+        std::fs::read(directory.join("image-1.png")).expect("image"),
+        b"png"
+    );
+}
+
+#[tokio::test]
+async fn asynchronous_runner_invokes_mut_handler() {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut handler = |session: Option<mercutio::io::McpSessionId>, _tool: TestTools| async move {
+        assert!(session.is_none());
+        Ok::<_, &str>("async output")
+    };
+    cli()
+        .run_async_on(
+            minimal_search_args("artifacts"),
+            Cursor::new(Vec::new()),
+            &mut stdout,
+            &mut stderr,
+            &mut handler,
+        )
+        .await
+        .expect("async runner");
+    assert_eq!(stdout, b"async output\n");
+    assert!(stderr.is_empty());
 }

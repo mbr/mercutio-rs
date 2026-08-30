@@ -38,3 +38,4 @@ clap = { version = "4", features = ["string"], optional = true }
 insta = { version = "=1.46.3", features = ["filters"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros"] }
 tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
