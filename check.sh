@@ -8,8 +8,10 @@ echo "rustc $(rustc --version) at $(which rustc), cargo $(cargo --version) at $(
 
 ./format.sh --check
 RUSTFLAGS="-D warnings" cargo check
-RUSTFLAGS="-D warnings" cargo check --features io-stdlib,io-tokio,io-axum,jiff
-RUSTFLAGS="-D warnings" cargo check --features io-stdlib,io-tokio,io-axum,chrono
+RUSTFLAGS="-D warnings" cargo check --features cli
+RUSTFLAGS="-D warnings" cargo check --features cli,io-stdlib,io-tokio,io-axum,jiff
+RUSTFLAGS="-D warnings" cargo check --features cli,io-stdlib,io-tokio,io-axum,chrono
 cargo clippy -- -D warnings
-cargo clippy --features io-stdlib,io-tokio,io-axum,jiff -- -D warnings
-cargo clippy --features io-stdlib,io-tokio,io-axum,chrono -- -D warnings
+cargo clippy --features cli -- -D warnings
+cargo clippy --features cli,io-stdlib,io-tokio,io-axum,jiff -- -D warnings
+cargo clippy --features cli,io-stdlib,io-tokio,io-axum,chrono -- -D warnings

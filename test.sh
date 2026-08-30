@@ -5,5 +5,6 @@
 set -e
 
 cargo test
-cargo test --features io-stdlib,io-tokio,io-axum,jiff
-cargo test --features io-stdlib,io-tokio,io-axum,chrono
+cargo test --features cli
+cargo test --features cli,io-stdlib,io-tokio,io-axum,jiff
+cargo test --features cli,io-stdlib,io-tokio,io-axum,chrono

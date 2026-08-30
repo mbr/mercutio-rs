@@ -80,7 +80,7 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 /// # Text vs JSON
 ///
 /// Prefer plain text for tool outputs the LLM will reason about. Research shows JSON-mode
-/// degrades reasoning performance (see [module docs](self) for details). Reserve
+/// degrades reasoning performance (see <https://arxiv.org/abs/2408.02442>). Reserve
 /// [`ToolOutput::json`] for data that needs programmatic parsing downstream.
 ///
 /// ```ignore
@@ -119,7 +119,7 @@ pub trait ToolDef: schemars::JsonSchema + serde::de::DeserializeOwned + 'static 
 ///
 /// # Snapshot Testing
 ///
-/// `ToolOutput` implements [`Display`] for snapshot testing with `insta`. This renders text
+/// `ToolOutput` implements [`fmt::Display`] for snapshot testing with `insta`. This renders text
 /// blocks directly and shows placeholders for binary content (images, audio, embedded resources):
 ///
 /// ```ignore
@@ -430,7 +430,7 @@ where
 
 /// Wrapper that formats the full error chain for tool responses.
 ///
-/// By default, tool errors only show the top-level message from [`Display`]. When using
+/// By default, tool errors only show the top-level message from [`fmt::Display`]. When using
 /// `thiserror` with `#[source]`, nested error causes are attached but not displayed. This wrapper
 /// traverses the [`Error::source`](std::error::Error::source) chain to produce a complete message
 /// like `"google API error: HTTP request failed: connection refused"`.
@@ -613,7 +613,7 @@ impl fmt::Display for ToolDefinition {
 
 /// Collection of tool definitions returned by [`ToolRegistry::definitions`].
 ///
-/// Implements [`Display`] to render all tools as a human-readable document. This lets you see
+/// Implements [`fmt::Display`] to render all tools as a human-readable document. This lets you see
 /// exactly what the LLM receives when it queries your MCP server's available tools, making it
 /// easy to verify tool names, descriptions, and parameter schemas.
 ///
@@ -840,7 +840,7 @@ fn convert_schema_to_tool_input(
 /// Registry of available tools.
 ///
 /// Typically implemented by enums representing the set of tools a server supports, where each
-/// variant corresponds to a tool and contains its parsed input. The [`tool_registry`] macro
+/// variant corresponds to a tool and contains its parsed input. The [`crate::tool_registry!`] macro
 /// generates this implementation automatically.
 ///
 /// For testing individual tools, any [`ToolDef`] can be used directly as a single-tool registry

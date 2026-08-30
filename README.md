@@ -29,6 +29,149 @@ mercutio::tool_registry! {
 
 `Rfc3339` requires either the `jiff` or `chrono` feature. It emits `format: "date-time"` in JSON Schema, and deserialization errors include the current time as an example to help models self-correct.
 
+## Native CLI
+
+Enable the `cli` feature to expose the same registry and handler as a native command-line
+application. The generated command uses conventional kebab-case spellings while retaining the
+original MCP names internally:
+
+```rust,ignore
+use std::convert::Infallible;
+use mercutio::cli::ToolRegistryExt as _;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = MyTools::cli("my-tools").version("1.0.0").build()?;
+    cli.run(|_session_id, tool| -> Result<String, Infallible> {
+        Ok(match tool {
+            MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city),
+            MyTools::SetReminder(input) => format!("Reminder set: {}", input.message),
+        })
+    })?;
+    Ok(())
+}
+```
+
+The registry above produces a complete standalone CLI:
+
+```console
+$ my-tools --help
+Invokes local MCP tool handlers as native commands
+
+Usage: my-tools [OPTIONS] [COMMAND]
+
+Commands:
+  get-weather  Gets current weather for a city
+  set-reminder Sets a reminder
+
+Options:
+      --output <MODE>       [default: artifacts] [possible values: artifacts, structured, raw, binary]
+      --images <MODE>       [default: auto] [possible values: auto, kitty, off]
+      --artifact-dir <DIR>  Parent directory for artifact output
+      --input-json <TOOL>   Reads the selected tool's JSON object from stdin
+  -h, --help                Print help
+  -V, --version             Print version
+
+$ my-tools get-weather --help
+Usage: my-tools get-weather --city <STRING>
+
+Options:
+      --city <STRING>  City name, e.g. "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch".
+  -h, --help           Print help
+```
+
+Schema properties become named options. Required options are enforced, string enums become exact
+possible values, booleans accept `--recursive`, `--recursive=true`, and `--recursive=false`, and
+scalar arrays repeat without comma splitting:
+
+```console
+my-tools search --query rust --tags mcp --tags rust --recursive=false
+```
+
+Statically described objects are flattened by property path. Dynamic objects and complex arrays
+remain strict JSON values. A supported scalar-versus-object `oneOf` uses either the parent option
+or its descendant options, never both:
+
+```console
+my-tools search --filter-range-min 1 --filter-range-max 10
+my-tools deploy --environment '{"RUST_LOG":"info","PORT":"8080"}'
+my-tools apply --rules '[{"path":"src","allow":true}]'
+my-tools search --filter 'recent items'
+my-tools search --filter-tags rust --filter-range-min 1
+```
+
+For stable scripting and schemas that cannot be represented completely as options, select the
+original tool by its normalized name and pipe exactly one JSON object through stdin:
+
+```console
+printf '%s' '{"city":"Berlin"}' | my-tools --input-json get-weather
+my-tools --output structured --input-json get-weather < arguments.json
+```
+
+Presentation options are root-scoped and must precede the tool command. Artifact output is the
+default: text is printed normally, while images, audio, and embedded blobs are decoded into a
+private unique temporary directory and represented by absolute paths. Agents can select a durable
+parent and disable terminal image presentation explicitly:
+
+```console
+my-tools --artifact-dir .pi/artifacts --images off create-chart --title Quarterly
+```
+
+`--images kitty` forces inline PNG display while retaining the artifact path. `--images auto`
+displays only on a compatible process terminal and remains off for pipes and injected writers.
+The other output modes are intended for scripts:
+
+```console
+my-tools --output structured report > report.json
+my-tools --output raw report > complete-mcp-result.json
+my-tools --output binary create-chart > chart.png
+```
+
+`structured` writes only `structuredContent`; `raw` preserves the complete MCP result, including
+base64; and `binary` requires exactly one binary block and writes its decoded bytes without
+framing. In binary mode, accompanying text is written to stderr.
+
+The parser and runners never terminate the process. [`CliError`](https://docs.rs/mercutio/latest/mercutio/cli/struct.CliError.html)
+reports status `0` for help and version, `2` for usage and input failures, and `1` for handler,
+rendering, decoding, filesystem, and stream failures. Successful payloads go to stdout and
+diagnostics go to stderr. Parse-only applications can use `try_parse_from` or
+`try_parse_matches`, invoke the returned typed tool directly, and provide custom rendering.
+
+### Nesting in an application
+
+Use `attach_to` when native tools share a binary with MCP transports. The entire generated tree is
+placed under the name supplied to `cli`; collisions with application commands are construction
+errors:
+
+```rust,ignore
+use mercutio::cli::ToolRegistryExt as _;
+
+let tools = MyTools::cli("tool").version("1.0.0").build()?;
+let command = tools.attach_to(
+    clap::Command::new("my-app")
+        .subcommand(clap::Command::new("mcp"))
+        .subcommand(
+            clap::Command::new("mcp-http")
+                .arg(clap::Arg::new("bind").long("bind").required(true)),
+        ),
+)?;
+let matches = command.get_matches();
+
+match matches.subcommand() {
+    Some(("tool", matches)) => {
+        let invocation = tools.try_parse_matches(matches, std::io::stdin().lock())?;
+        let (tool, output_options) = invocation.into_parts();
+        // Invoke the same handler used by the MCP branches, then render as appropriate.
+    }
+    Some(("mcp", _)) => { /* run stdio MCP */ }
+    Some(("mcp-http", _)) => { /* run HTTP MCP */ }
+    _ => unreachable!("Clap validates subcommands"),
+}
+```
+
+A small test that calls `MyTools::cli("tool").build()` is recommended. It catches lossy naming
+collisions such as `filter_tags` versus `filter.tags`, unsupported protocol names, and the reserved
+`help` spelling when schemas change.
+
 ## Sans-IO Usage
 
 The core API is a state machine. Pass in parsed messages, match on the output:
@@ -240,6 +383,7 @@ async fn main() -> anyhow::Result<()> {
 
 | Feature | Description |
 |---------|-------------|
+| `cli` | Native schema-driven command-line interface |
 | `io-stdlib` | Synchronous stdin/stdout transport |
 | `io-tokio` | Async stdin/stdout transport (Tokio) |
 | `io-axum` | HTTP transport (Axum) with session management |

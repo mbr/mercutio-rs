@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add the optional `cli` feature for exposing a `ToolRegistry` as schema-driven native commands, with typed and whole-input JSON parsing, synchronous and asynchronous runners, nested application commands, filesystem artifacts, structured JSON, raw MCP JSON, and decoded binary output.
+
 ## [0.8.0] - 2026-08-30
 
 ### Changed

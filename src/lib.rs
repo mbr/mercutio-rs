@@ -87,7 +87,7 @@ enum Phase {
 ///
 /// # Snapshot Testing
 ///
-/// `McpServer` implements [`Display`] to render the full server document: name, version,
+/// `McpServer` implements [`fmt::Display`] to render the full server document: name, version,
 /// instructions, and tool definitions. Use this for snapshot testing with `insta`:
 ///
 /// ```ignore

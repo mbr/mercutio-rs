@@ -4,7 +4,7 @@ description = "IO-less MCP server library"
 version = "0.8.0"
 edition = "2024"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/mbr/mercutio"
+repository = "https://github.com/mbr/mercutio-rs"
 documentation = "https://docs.rs/mercutio"
 
 [features]
@@ -16,7 +16,7 @@ chrono = ["dep:chrono"]
 cli = ["dep:clap"]
 
 [package.metadata.docs.rs]
-features = ["io-stdlib", "io-tokio", "io-axum", "jiff"]
+features = ["cli", "io-stdlib", "io-tokio", "io-axum", "jiff"]
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]

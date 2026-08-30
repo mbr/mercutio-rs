@@ -3,10 +3,10 @@
 //! This module provides handler traits and ready-made transport implementations. The transports
 //! are feature-gated:
 //!
-//! - **`io-stdlib`**: Synchronous stdin/stdout via [`stdlib::run_stdio`]. Blocking, no async
+//! - **`io-stdlib`**: Synchronous stdin/stdout via `stdlib::run_stdio`. Blocking, no async
 //!   runtime required.
-//! - **`io-tokio`**: Async stdin/stdout via [`tokio::run_stdio`]. Requires Tokio runtime.
-//! - **`io-axum`**: HTTP transport via [`axum::mcp_router`]. Implements MCP Streamable HTTP with
+//! - **`io-tokio`**: Async stdin/stdout via `tokio::run_stdio`. Requires Tokio runtime.
+//! - **`io-axum`**: HTTP transport via `axum::mcp_router`. Implements MCP Streamable HTTP with
 //!   session management.
 //!
 //! The handler traits [`ToolHandler`] and [`MutToolHandler`] are always available for custom

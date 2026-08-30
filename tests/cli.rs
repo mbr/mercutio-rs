@@ -851,6 +851,45 @@ fn artifacts_survive_final_stdout_failure() {
     );
 }
 
+fn search_behavior(tool: TestTools) -> ToolOutput {
+    match tool {
+        TestTools::Search(input) => format!("handled {}", input.query).into(),
+        TestTools::Ping(_) => "pong".into(),
+    }
+}
+
+#[test]
+fn native_and_mcp_paths_invoke_the_same_behavior() {
+    let mut server = mercutio::McpServer::<TestTools>::builder()
+        .name("test")
+        .version("1.0")
+        .build();
+    let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+    let _ = server.handle(mercutio::parse_line(initialize).expect("initialize request"));
+    let initialized = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    let _ = server.handle(mercutio::parse_line(initialized).expect("initialized notification"));
+    let call = r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"search_items","arguments":{"query":"rust","mode":"fast"}}}"#;
+    let mercutio::Output::ToolCall { tool, .. } =
+        server.handle(mercutio::parse_line(call).expect("tool call"))
+    else {
+        panic!("expected MCP tool call");
+    };
+    let mcp_output = search_behavior(tool);
+
+    let mut cli_output = Vec::new();
+    cli()
+        .run_on(
+            minimal_search_args("artifacts"),
+            Cursor::new(Vec::new()),
+            &mut cli_output,
+            Vec::new(),
+            |_, tool| Ok::<_, &str>(search_behavior(tool)),
+        )
+        .expect("native tool call");
+    assert_eq!(mcp_output.as_text(), Some("handled rust"));
+    assert_eq!(cli_output, b"handled rust\n");
+}
+
 #[tokio::test]
 async fn asynchronous_runner_invokes_mut_handler() {
     let mut stdout = Vec::new();
