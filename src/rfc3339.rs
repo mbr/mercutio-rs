@@ -64,7 +64,7 @@ mod backend {
     }
 }
 
-#[cfg(feature = "chrono")]
+#[cfg(all(feature = "chrono", not(feature = "jiff")))]
 mod backend {
     use std::fmt;
 
