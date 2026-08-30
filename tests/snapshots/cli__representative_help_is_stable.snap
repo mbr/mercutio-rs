@@ -1,0 +1,84 @@
+---
+source: tests/cli.rs
+expression: "format!(\"{root_help}\\n--- TOOL ---\\n{tool_help}\")"
+---
+Invokes local MCP tool handlers as native commands. Presentation options must precede the tool command. --input-json <TOOL> reads one complete JSON object from standard input instead of using typed tool options.
+
+Usage: my-tools [OPTIONS] [COMMAND]
+
+Commands:
+  search-items  Searches indexed items
+  http-server   Checks service health
+
+Options:
+      --output <MODE>
+          Selects output: artifacts renders text and saves binary blocks; structured writes structuredContent JSON; raw writes the complete MCP result as JSON; binary writes exactly one decoded binary block.
+          
+          [default: artifacts]
+          [possible values: artifacts, structured, raw, binary]
+
+      --images <MODE>
+          Controls Kitty image display in artifact output
+          
+          [default: auto]
+          [possible values: auto, kitty, off]
+
+      --artifact-dir <DIR>
+          Parent directory for artifact output. A private unique invocation directory is created beneath it.
+
+      --input-json <TOOL>
+          Selects a tool and reads exactly one complete JSON object from standard input through EOF. This route cannot be combined with a tool subcommand.
+          
+          [possible values: search-items, http-server]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
+
+--- TOOL ---
+Searches indexed items
+
+Usage: search-items [OPTIONS] --mode <STRING> --query <STRING>
+
+Options:
+      --mode <STRING>
+          Search strategy.
+          
+          [possible values: fast, thorough]
+
+      --query <STRING>
+          Search expression.
+
+      --environment <JSON>
+          Process environment. Value is strict JSON (object); JSON strings require quotes.
+
+      --filter-range-min <INTEGER>
+          Smallest accepted value. Required when `filter` is activated. Format: int64.
+
+      --filter-range-max <INTEGER>
+          Largest accepted value. Format: int64.
+
+      --filter-tags <STRING>
+          Labels to include. Repeat this option once per array item; order is preserved.
+
+      --input-json <STRING>
+          A property sharing the root adapter option's spelling.
+
+      --limit <INTEGER>
+          Optional result limit. Format: uint64. Minimum: 0.
+
+      --recursive [<BOOL>]
+          Whether to recurse. Accepts --option, --option=true, or --option=false forms.
+          
+          [possible values: true, false]
+
+      --rules <JSON>
+          Ordered matching rules. Value is strict JSON (array); JSON strings require quotes.
+
+      --threshold <NUMBER>
+          Optional score threshold. Format: double.
+
+  -h, --help
+          Print help (see a summary with '-h')
