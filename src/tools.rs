@@ -519,41 +519,46 @@ impl ToolDefinition {
         }
     }
 
-    /// Converts to the serialized MCP tool representation.
-    pub fn into_mcp_tool(self) -> serde_json::Value {
-        let Self {
-            name,
-            description,
-            input_schema,
-            input_schema_definitions,
-        } = self;
-        let tool = rust_mcp_schema::Tool {
-            annotations: None,
-            description: Some(description),
-            execution: None,
-            icons: Vec::new(),
-            input_schema,
-            meta: None,
-            name,
-            output_schema: None,
-            title: None,
-        };
-        let mut value = serde_json::to_value(tool).expect("Tool serialization failed");
+    /// Returns the complete input schema sent to MCP clients.
+    pub(crate) fn input_schema_json(&self) -> serde_json::Value {
+        let mut value =
+            serde_json::to_value(&self.input_schema).expect("ToolInputSchema serialization failed");
 
-        if !input_schema_definitions.is_empty() {
+        if !self.input_schema_definitions.is_empty() {
             // The generated MCP 2025-11-25 type cannot store additional JSON Schema keywords,
             // although the wire schema permits them. Merge the rare recursive definitions only
             // at this serialization boundary instead of maintaining duplicate protocol types.
             value
-                .get_mut("inputSchema")
-                .and_then(serde_json::Value::as_object_mut)
+                .as_object_mut()
                 .expect("Tool input schema must be an object")
                 .insert(
                     "$defs".into(),
-                    serde_json::Value::Object(input_schema_definitions),
+                    serde_json::Value::Object(self.input_schema_definitions.clone()),
                 );
         }
 
+        value
+    }
+
+    /// Converts to the serialized MCP tool representation.
+    pub fn into_mcp_tool(self) -> serde_json::Value {
+        let input_schema_json = self.input_schema_json();
+        let tool = rust_mcp_schema::Tool {
+            annotations: None,
+            description: Some(self.description),
+            execution: None,
+            icons: Vec::new(),
+            input_schema: self.input_schema,
+            meta: None,
+            name: self.name,
+            output_schema: None,
+            title: None,
+        };
+        let mut value = serde_json::to_value(tool).expect("Tool serialization failed");
+        value
+            .as_object_mut()
+            .expect("Tool must be an object")
+            .insert("inputSchema".into(), input_schema_json);
         value
     }
 }
