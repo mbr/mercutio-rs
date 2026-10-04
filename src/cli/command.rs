@@ -103,49 +103,29 @@ fn value_arg(value: &ValueSpec) -> Arg {
         .long(value.cli_name.clone())
         .value_name(value_name_for_kind(&value.kind))
         .help(option_help(value))
-        .long_help(option_long_help(value));
+        .long_help(option_long_help(value))
+        .value_parser(ValueParser::string())
+        .required(value.required && value.conditional_parent.is_none());
 
-    match &value.kind {
-        ValueKind::Scalar(ScalarKind::Boolean) => {
-            arg = arg
-                .action(ArgAction::Set)
-                .num_args(0..=1)
-                .default_missing_value("true")
-                .value_parser(PossibleValuesParser::new(["true", "false"]));
-        }
-        ValueKind::Scalar(ScalarKind::String(values)) if !values.is_empty() => {
-            arg = arg.value_parser(PossibleValuesParser::new(values.clone()));
-        }
-        ValueKind::Scalar(ScalarKind::Integer | ScalarKind::Number) => {
-            arg = arg.allow_negative_numbers(true);
-        }
-        ValueKind::Array(ScalarKind::Boolean) => {
-            arg = arg
-                .action(ArgAction::Append)
-                .num_args(0..=1)
-                .default_missing_value("true")
-                .value_parser(PossibleValuesParser::new(["true", "false"]));
-        }
-        ValueKind::Array(ScalarKind::String(values)) if !values.is_empty() => {
-            arg = arg
-                .action(ArgAction::Append)
-                .value_parser(PossibleValuesParser::new(values.clone()));
-        }
-        ValueKind::Array(ScalarKind::Integer | ScalarKind::Number) => {
-            arg = arg.action(ArgAction::Append).allow_negative_numbers(true);
-        }
-        ValueKind::Array(_) => {
+    let scalar = match &value.kind {
+        ValueKind::Scalar(kind) => Some(kind),
+        ValueKind::Array(kind) => {
             arg = arg.action(ArgAction::Append);
+            Some(kind)
         }
-        ValueKind::Json(_) | ValueKind::Scalar(_) => {
-            arg = arg.value_parser(ValueParser::string());
+        ValueKind::Json(_) => None,
+    };
+    match scalar {
+        Some(ScalarKind::Boolean) => arg
+            .num_args(0..=1)
+            .default_missing_value("true")
+            .value_parser(PossibleValuesParser::new(["true", "false"])),
+        Some(ScalarKind::String(values)) if !values.is_empty() => {
+            arg.value_parser(PossibleValuesParser::new(values.clone()))
         }
+        Some(ScalarKind::Integer | ScalarKind::Number) => arg.allow_negative_numbers(true),
+        _ => arg,
     }
-
-    if value.required && value.conditional_parent.is_none() {
-        arg = arg.required(true);
-    }
-    arg
 }
 
 /// Returns concise option help.
@@ -218,14 +198,12 @@ fn append_schema_annotations(parts: &mut Vec<String>, schema: &Value) {
 /// Returns the Clap value name for an option encoding.
 fn value_name_for_kind(kind: &ValueKind) -> &'static str {
     match kind {
-        ValueKind::Scalar(ScalarKind::String(_)) => "STRING",
-        ValueKind::Scalar(ScalarKind::Integer) => "INTEGER",
-        ValueKind::Scalar(ScalarKind::Number) => "NUMBER",
-        ValueKind::Scalar(ScalarKind::Boolean) => "BOOL",
-        ValueKind::Array(ScalarKind::String(_)) => "STRING",
-        ValueKind::Array(ScalarKind::Integer) => "INTEGER",
-        ValueKind::Array(ScalarKind::Number) => "NUMBER",
-        ValueKind::Array(ScalarKind::Boolean) => "BOOL",
+        ValueKind::Scalar(kind) | ValueKind::Array(kind) => match kind {
+            ScalarKind::String(_) => "STRING",
+            ScalarKind::Integer => "INTEGER",
+            ScalarKind::Number => "NUMBER",
+            ScalarKind::Boolean => "BOOL",
+        },
         ValueKind::Json(_) => "JSON",
     }
 }
