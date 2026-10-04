@@ -1,5 +1,7 @@
 //! Renders tool results and manages binary artifacts and terminal graphics.
 
+#[cfg(unix)]
+use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::{
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
@@ -43,12 +45,7 @@ fn render_structured(output: &ToolOutput, stdout: &mut impl Write) -> Result<(),
     let structured = output
         .structured_content()
         .ok_or_else(|| CliError::runtime("tool output has no structuredContent"))?;
-    let mut rendered = serde_json::to_vec(structured)
-        .map_err(|error| CliError::runtime(format!("failed to serialize output: {error}")))?;
-    rendered.push(b'\n');
-    stdout
-        .write_all(&rendered)
-        .map_err(|error| CliError::runtime(format!("failed to write stdout: {error}")))
+    write_json(structured, stdout)
 }
 
 /// Borrowed successful MCP result used for lossless raw serialization.
@@ -71,7 +68,12 @@ fn render_raw(output: &ToolOutput, stdout: &mut impl Write) -> Result<(), CliErr
         is_error: false,
         structured_content: output.structured_content(),
     };
-    let mut rendered = serde_json::to_vec(&result)
+    write_json(&result, stdout)
+}
+
+/// Buffers a complete JSON document before writing it with a trailing newline.
+fn write_json(value: &impl Serialize, stdout: &mut impl Write) -> Result<(), CliError> {
+    let mut rendered = serde_json::to_vec(value)
         .map_err(|error| CliError::runtime(format!("failed to serialize output: {error}")))?;
     rendered.push(b'\n');
     stdout
@@ -221,7 +223,7 @@ fn render_artifacts(
     let blocks = binary_blocks(output);
     validate_binary_blocks(&blocks)?;
     let mut paths = BTreeMap::new();
-    let mut directory = if blocks.is_empty() {
+    let directory = if blocks.is_empty() {
         None
     } else {
         Some(PartialDirectory::create(options.artifact_dir.as_deref())?)
@@ -255,7 +257,7 @@ fn render_artifacts(
         ImageMode::Off => false,
     };
     let rendered = render_textual_blocks(output, &paths, kitty, false);
-    if let Some(directory) = directory.take() {
+    if let Some(directory) = directory {
         directory.persist();
     }
     stdout
@@ -356,13 +358,14 @@ fn artifact_extension(mime_type: Option<&str>) -> &'static str {
 
 /// Encodes a PNG payload as chunked Kitty graphics protocol commands.
 fn kitty_image(data: &str) -> String {
-    let chunks = data.as_bytes().chunks(4096).collect::<Vec<_>>();
+    let chunks = data.as_bytes().chunks(4096);
+    let chunk_count = chunks.len();
     let mut rendered = String::new();
-    if chunks.is_empty() {
+    if chunk_count == 0 {
         return "\u{1b}_Ga=T,f=100,m=0;\u{1b}\\".into();
     }
-    for (index, chunk) in chunks.iter().enumerate() {
-        let more = usize::from(index + 1 < chunks.len());
+    for (index, chunk) in chunks.enumerate() {
+        let more = usize::from(index + 1 < chunk_count);
         if index == 0 {
             rendered.push_str(&format!("\u{1b}_Ga=T,f=100,m={more};"));
         } else {
@@ -458,49 +461,23 @@ fn resolve_artifact_parent(parent: Option<&Path>) -> Result<PathBuf, CliError> {
 }
 
 /// Creates a private invocation directory where supported.
-#[cfg(unix)]
 fn create_private_directory(path: &Path) -> io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-
     let mut builder = fs::DirBuilder::new();
-    builder.mode(0o700).create(path)
-}
-
-/// Creates an invocation directory on non-Unix platforms.
-#[cfg(not(unix))]
-fn create_private_directory(path: &Path) -> io::Result<()> {
-    fs::create_dir(path)
+    #[cfg(unix)]
+    builder.mode(0o700);
+    builder.recursive(false).create(path)
 }
 
 /// Creates a private artifact file where supported.
-#[cfg(unix)]
 fn create_private_file(path: &Path) -> Result<File, CliError> {
-    use std::os::unix::fs::OpenOptionsExt;
-
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(path)
-        .map_err(|error| {
-            CliError::runtime(format!(
-                "failed to create artifact `{}`: {error}",
-                path.display()
-            ))
-        })
-}
-
-/// Creates an artifact file on non-Unix platforms.
-#[cfg(not(unix))]
-fn create_private_file(path: &Path) -> Result<File, CliError> {
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|error| {
-            CliError::runtime(format!(
-                "failed to create artifact `{}`: {error}",
-                path.display()
-            ))
-        })
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    options.mode(0o600);
+    options.open(path).map_err(|error| {
+        CliError::runtime(format!(
+            "failed to create artifact `{}`: {error}",
+            path.display()
+        ))
+    })
 }
