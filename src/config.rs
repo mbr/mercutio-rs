@@ -113,64 +113,65 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{JsonRpcError, McpServer, ToolDefinitions, ToolRegistry};
+    //! Verifies configuration as advertised to MCP clients.
 
-    /// Minimal tool registry for testing builder behavior.
-    enum TestTools {}
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::{Value, json};
 
-    impl ToolRegistry for TestTools {
-        fn parse(name: &str, _arguments: serde_json::Value) -> Result<Self, JsonRpcError> {
-            Err(JsonRpcError::MethodNotFound {
-                msg: format!("unknown tool: {name}"),
-            })
-        }
+    use crate::{McpServer, NoTools, Output, ToolDef, ToolRegistry, parse_line};
 
-        fn definitions() -> ToolDefinitions {
-            ToolDefinitions::new(vec![])
-        }
+    /// Enables tool capabilities through a single-tool registry.
+    #[derive(Deserialize, JsonSchema)]
+    struct TestTool {}
+
+    impl ToolDef for TestTool {
+        const NAME: &'static str = "test";
+        const DESCRIPTION: &'static str = "Test tool";
     }
 
-    #[test]
-    fn default_values() {
-        let server = McpServer::<TestTools>::builder().build();
-        assert!(!server.is_ready());
+    /// Captures the configuration sent in the initialization response.
+    fn advertised_configuration<R: ToolRegistry>(mut server: McpServer<R>) -> Value {
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+        let Output::Send(response) =
+            server.handle(parse_line(request).expect("initialize request"))
+        else {
+            panic!("expected initialization response");
+        };
+        let response = serde_json::to_value(response.into_inner()).expect("serializable response");
+        response["result"].clone()
     }
 
+    /// Advertises the default identity without tool capabilities or instructions.
     #[test]
-    fn tools_disabled_for_no_tools() {
-        use crate::NoTools;
-        let server = McpServer::<NoTools>::builder().build();
-        assert!(server.config.capabilities.tools.is_none());
+    fn advertises_defaults_without_tools() {
+        let result = advertised_configuration(McpServer::<NoTools>::builder().build());
+        assert_eq!(
+            result["serverInfo"],
+            json!({"name": "unnamed-mcp-server", "version": "0.0.0"})
+        );
+        assert_eq!(result["capabilities"], json!({}));
+        assert!(result.get("instructions").is_none());
     }
 
+    /// Sends configured metadata and enables the tool-list capability.
     #[test]
-    fn tools_enabled_for_registry_with_tools() {
-        let server = McpServer::<TestTools>::builder().build();
-        assert!(server.config.capabilities.tools.is_some());
-        let tools = server
-            .config
-            .capabilities
-            .tools
-            .as_ref()
-            .expect("tools capability");
-        assert_eq!(tools.list_changed, Some(false));
-    }
-
-    #[test]
-    fn builder_sets_fields() {
-        let server = McpServer::<TestTools>::builder()
+    fn advertises_configured_server_with_tools() {
+        let server = McpServer::<TestTool>::builder()
             .name("test-server")
             .version("1.2.3")
             .title("Test Server")
             .instructions("Use this server for testing.")
             .build();
-
-        assert_eq!(server.config.info.name, "test-server");
-        assert_eq!(server.config.info.version, "1.2.3");
-        assert_eq!(server.config.info.title.as_deref(), Some("Test Server"));
+        let result = advertised_configuration(server);
         assert_eq!(
-            server.config.instructions.as_deref(),
-            Some("Use this server for testing.")
+            result["serverInfo"],
+            json!({"name": "test-server", "version": "1.2.3", "title": "Test Server"})
+        );
+        assert_eq!(result["instructions"], "Use this server for testing.");
+        assert_eq!(
+            result["capabilities"],
+            json!({"tools": {"listChanged": false}})
         );
     }
 }
