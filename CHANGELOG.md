@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Preserve root-level `additionalProperties` in advertised MCP tool input schemas, retaining unknown-field restrictions and map value schemas.
+- Use localized JSON input for unsupported CLI schema compositions, references, complex arrays, and bare nested objects without removing zero-argument commands for bare root objects.
 
 ## [0.9.0-alpha.1] - 2026-08-30
 

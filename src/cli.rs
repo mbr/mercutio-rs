@@ -899,7 +899,10 @@ fn analyze_tool(
 ) -> ToolSpec {
     let schema = definition.input_schema_json();
     let mut option_names = BTreeMap::<String, Vec<String>>::new();
-    let root = if is_static_object(&schema) {
+    let root = if matches!(
+        classify_schema(&schema, SchemaPosition::Root),
+        SchemaShape::Object
+    ) {
         Some(analyze_object(
             &schema,
             None,
@@ -951,7 +954,12 @@ fn analyze_object(
             };
             let child_required = required_names.contains(&child_name.as_str());
             let child_optional_parent = optional_parent.clone().or_else(|| {
-                (!child_required && is_static_object(child_schema)).then(|| child_path.clone())
+                (!child_required
+                    && matches!(
+                        classify_schema(child_schema, SchemaPosition::Nested),
+                        SchemaShape::Object
+                    ))
+                .then(|| child_path.clone())
             });
             let node = analyze_node(
                 child_name,
@@ -986,20 +994,8 @@ fn analyze_node(
     option_names: &mut BTreeMap<String, Vec<String>>,
     problems: &mut Vec<CliBuildProblem>,
 ) -> NodeSpec {
-    if let Some(union) = analyze_union(
-        name,
-        schema,
-        &path,
-        required,
-        optional_parent.clone(),
-        option_names,
-        problems,
-    ) {
-        return NodeSpec::Union(union);
-    }
-
-    if is_static_object(schema) {
-        return NodeSpec::Object(analyze_object(
+    match classify_schema(schema, SchemaPosition::Nested) {
+        SchemaShape::Object => NodeSpec::Object(analyze_object(
             schema,
             Some(name.to_string()),
             path,
@@ -1007,70 +1003,51 @@ fn analyze_node(
             optional_parent,
             option_names,
             problems,
-        ));
+        )),
+        SchemaShape::Value(kind) => NodeSpec::Value(analyze_value(
+            name,
+            schema,
+            path,
+            required,
+            optional_parent,
+            kind,
+            option_names,
+            problems,
+        )),
+        SchemaShape::ScalarObject {
+            scalar_schema,
+            scalar_kind,
+            object_schema,
+        } => {
+            let mut scalar_schema = scalar_schema.clone();
+            merge_annotations(&mut scalar_schema, schema);
+            let scalar = analyze_value(
+                name,
+                &scalar_schema,
+                path.clone(),
+                false,
+                optional_parent.clone(),
+                ValueKind::Scalar(scalar_kind),
+                option_names,
+                problems,
+            );
+            let object = analyze_object(
+                object_schema,
+                Some(name.to_string()),
+                path.clone(),
+                false,
+                Some(optional_parent.unwrap_or(path)),
+                option_names,
+                problems,
+            );
+            NodeSpec::Union(UnionSpec {
+                name: name.to_string(),
+                required,
+                scalar,
+                object,
+            })
+        }
     }
-
-    NodeSpec::Value(analyze_value(
-        name,
-        schema,
-        path,
-        required,
-        optional_parent,
-        option_names,
-        problems,
-    ))
-}
-
-/// Analyzes a supported scalar-versus-object union.
-#[allow(clippy::too_many_arguments)]
-fn analyze_union(
-    name: &str,
-    schema: &Value,
-    path: &str,
-    required: bool,
-    optional_parent: Option<String>,
-    option_names: &mut BTreeMap<String, Vec<String>>,
-    problems: &mut Vec<CliBuildProblem>,
-) -> Option<UnionSpec> {
-    let choices = schema.get("oneOf")?.as_array()?;
-    if choices.len() != 2 {
-        return None;
-    }
-    let (scalar_schema, object_schema) =
-        if scalar_kind(&choices[0]).is_some() && is_nonempty_static_object(&choices[1]) {
-            (&choices[0], &choices[1])
-        } else if scalar_kind(&choices[1]).is_some() && is_nonempty_static_object(&choices[0]) {
-            (&choices[1], &choices[0])
-        } else {
-            return None;
-        };
-
-    let mut scalar_schema = scalar_schema.clone();
-    merge_annotations(&mut scalar_schema, schema);
-    let scalar = analyze_value(
-        name,
-        &scalar_schema,
-        path.to_string(),
-        false,
-        optional_parent.clone(),
-        option_names,
-        problems,
-    );
-    let object = analyze_object(
-        object_schema,
-        Some(name.to_string()),
-        path.to_string(),
-        false,
-        Some(optional_parent.unwrap_or_else(|| path.to_string())),
-        option_names,
-        problems,
-    );
-    Some(UnionSpec {
-        name: name.to_string(),
-        required,
-        scalar,
-        object,
-    })
 }
 
 /// Copies descriptive parent annotations onto a union branch.
@@ -1088,12 +1065,14 @@ fn merge_annotations(branch: &mut Value, parent: &Value) {
 }
 
 /// Analyzes one command option.
+#[allow(clippy::too_many_arguments)]
 fn analyze_value(
     name: &str,
     schema: &Value,
     path: String,
     required: bool,
     optional_parent: Option<String>,
+    kind: ValueKind,
     option_names: &mut BTreeMap<String, Vec<String>>,
     problems: &mut Vec<CliBuildProblem>,
 ) -> ValueSpec {
@@ -1124,35 +1103,102 @@ fn analyze_value(
         cli_name,
         required,
         conditional_parent: optional_parent,
-        kind: value_kind(schema),
+        kind,
         schema: schema.clone(),
     }
 }
 
-/// Returns the option encoding for a schema.
-fn value_kind(schema: &Value) -> ValueKind {
-    if let Some(kind) = scalar_kind(schema) {
-        return ValueKind::Scalar(kind);
-    }
-    if schema.get("type").and_then(Value::as_str) == Some("array") {
-        if let Some(items) = schema.get("items")
-            && let Some(kind) = scalar_kind(items)
-        {
-            return ValueKind::Array(kind);
-        }
-        return ValueKind::Json(Some("array"));
-    }
-    let expected = schema
-        .get("type")
-        .and_then(Value::as_str)
-        .and_then(static_json_type);
-    ValueKind::Json(expected)
+/// Schema shapes supported by native input encodings.
+enum SchemaShape<'a> {
+    /// An object with statically enumerable properties.
+    Object,
+    /// A single typed, repeatable, or JSON-valued option.
+    Value(ValueKind),
+    /// A scalar-versus-object union with selectable object descendants.
+    ScalarObject {
+        /// Source schema for the scalar branch.
+        scalar_schema: &'a Value,
+        /// Encoding of the scalar branch.
+        scalar_kind: ScalarKind,
+        /// Source schema for the object branch.
+        object_schema: &'a Value,
+    },
 }
 
-/// Returns a supported scalar kind.
-fn scalar_kind(schema: &Value) -> Option<ScalarKind> {
-    match schema.get("type").and_then(Value::as_str)? {
-        "string" => Some(ScalarKind::String(
+/// Distinguishes the tool input root from nested schema values.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum SchemaPosition {
+    /// Tool input, where bare object schemas retain zero-argument commands.
+    Root,
+    /// A property, array item, or union branch.
+    Nested,
+}
+
+/// Classifies input encoding without validating general JSON Schema constraints.
+fn classify_schema(schema: &Value, position: SchemaPosition) -> SchemaShape<'_> {
+    let schema_type = schema.get("type").and_then(Value::as_str);
+    let json = SchemaShape::Value(ValueKind::Json(schema_type.and_then(static_json_type)));
+    if ["$ref", "$dynamicRef", "anyOf", "allOf"]
+        .iter()
+        .any(|keyword| schema.get(keyword).is_some())
+    {
+        return json;
+    }
+    if let Some(choices) = schema.get("oneOf") {
+        if schema.get("type").is_none()
+            && let Some([first, second]) = choices.as_array().map(Vec::as_slice)
+        {
+            for (scalar_schema, object_schema) in [(first, second), (second, first)] {
+                if let SchemaShape::Value(ValueKind::Scalar(scalar_kind)) =
+                    classify_schema(scalar_schema, SchemaPosition::Nested)
+                    && matches!(
+                        classify_schema(object_schema, SchemaPosition::Nested),
+                        SchemaShape::Object
+                    )
+                    && object_has_options(object_schema)
+                {
+                    return SchemaShape::ScalarObject {
+                        scalar_schema,
+                        scalar_kind,
+                        object_schema,
+                    };
+                }
+            }
+        }
+        return json;
+    }
+
+    match schema_type {
+        Some("object") => {
+            let properties = schema.get("properties");
+            let additional = schema.get("additionalProperties");
+            // Schemars also emits bare object schemas for zero-field structs.
+            // Preserve their root commands; nested bare objects need JSON input.
+            let enumerable = properties.is_some_and(Value::is_object)
+                || (properties.is_none()
+                    && (additional == Some(&Value::Bool(false))
+                        || position == SchemaPosition::Root));
+            if enumerable
+                && additional.is_none_or(|value| value == &Value::Bool(false))
+                && schema.get("patternProperties").is_none()
+            {
+                SchemaShape::Object
+            } else {
+                json
+            }
+        }
+        Some("array") => {
+            if schema.get("prefixItems").is_none()
+                && let Some(items) = schema.get("items")
+                && let SchemaShape::Value(ValueKind::Scalar(kind)) =
+                    classify_schema(items, SchemaPosition::Nested)
+            {
+                SchemaShape::Value(ValueKind::Array(kind))
+            } else {
+                json
+            }
+        }
+        Some("string") => SchemaShape::Value(ValueKind::Scalar(ScalarKind::String(
             schema
                 .get("enum")
                 .and_then(Value::as_array)
@@ -1161,12 +1207,27 @@ fn scalar_kind(schema: &Value) -> Option<ScalarKind> {
                 .filter_map(Value::as_str)
                 .map(String::from)
                 .collect(),
-        )),
-        "integer" => Some(ScalarKind::Integer),
-        "number" => Some(ScalarKind::Number),
-        "boolean" => Some(ScalarKind::Boolean),
-        _ => None,
+        ))),
+        Some("integer") => SchemaShape::Value(ValueKind::Scalar(ScalarKind::Integer)),
+        Some("number") => SchemaShape::Value(ValueKind::Scalar(ScalarKind::Number)),
+        Some("boolean") => SchemaShape::Value(ValueKind::Scalar(ScalarKind::Boolean)),
+        _ => json,
     }
+}
+
+/// Returns whether a flattened object branch has an option that can select it.
+fn object_has_options(schema: &Value) -> bool {
+    schema
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| {
+            properties.values().any(|property| {
+                match classify_schema(property, SchemaPosition::Nested) {
+                    SchemaShape::Object => object_has_options(property),
+                    SchemaShape::Value(_) | SchemaShape::ScalarObject { .. } => true,
+                }
+            })
+        })
 }
 
 /// Maps a schema type to a stable expected JSON type.
@@ -1181,27 +1242,6 @@ fn static_json_type(schema_type: &str) -> Option<&'static str> {
         "string" => Some("string"),
         _ => None,
     }
-}
-
-/// Returns whether an object can be flattened without losing dynamic keys.
-fn is_static_object(schema: &Value) -> bool {
-    schema.get("type").and_then(Value::as_str) == Some("object")
-        && schema.get("properties").is_none_or(Value::is_object)
-        && schema.get("$ref").is_none()
-        && schema.get("oneOf").is_none()
-        && schema.get("anyOf").is_none()
-        && schema
-            .get("additionalProperties")
-            .is_none_or(|value| value == &Value::Bool(false))
-}
-
-/// Returns whether a flattenable object has at least one property.
-fn is_nonempty_static_object(schema: &Value) -> bool {
-    is_static_object(schema)
-        && schema
-            .get("properties")
-            .and_then(Value::as_object)
-            .is_some_and(|properties| !properties.is_empty())
 }
 
 /// Appends every normalization collision to construction problems.
