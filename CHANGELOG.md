@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0-alpha.2] - 2026-10-04
+
 ### Added
 
 - `Cli::run_or_exit()` and `run_async_or_exit()` convenience runners that print help or errors and exit with the appropriate status, returning normally on success.
@@ -178,7 +180,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.1...HEAD
+[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.2...HEAD
+[0.9.0-alpha.2]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.1...0.9.0-alpha.2
 [0.9.0-alpha.1]: https://github.com/mbr/mercutio-rs/compare/0.8.0...0.9.0-alpha.1
 [0.8.0]: https://github.com/mbr/mercutio-rs/compare/0.7.2...0.8.0
 [0.7.2]: https://github.com/mbr/mercutio-rs/compare/0.7.1...0.7.2
