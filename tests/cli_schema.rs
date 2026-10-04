@@ -24,6 +24,25 @@ fn fallback_cases() -> Vec<(&'static str, Value, Value)> {
     vec![
         ("scalar_union", scalar_union.clone(), json!("first")),
         (
+            "mixed_union",
+            json!({ "anyOf": [{ "type": "string" }, { "type": "integer" }] }),
+            json!(42),
+        ),
+        (
+            "recursive",
+            json!({ "$ref": "#/$defs/Node" }),
+            json!({ "value": "root", "next": { "value": "leaf" } }),
+        ),
+        (
+            "hybrid",
+            json!({
+                "type": "object",
+                "properties": { "fixed": { "type": "string" } },
+                "additionalProperties": { "type": "string" }
+            }),
+            json!({ "fixed": "known", "extra": "dynamic" }),
+        ),
+        (
             "scalar_one_of",
             json!({
                 "type": "string",
@@ -141,7 +160,15 @@ impl JsonSchema for EncodingInput {
             "required": ["typed", "empty", "closed"],
             "$defs": {
                 "Label": { "type": "string" },
-                "Labels": { "type": "array", "items": { "type": "string" } }
+                "Labels": { "type": "array", "items": { "type": "string" } },
+                "Node": {
+                    "type": "object",
+                    "properties": {
+                        "value": { "type": "string" },
+                        "next": { "$ref": "#/$defs/Node" }
+                    },
+                    "required": ["value"]
+                }
             }
         });
         let properties = schema.as_object_mut().expect("object schema")["properties"]
