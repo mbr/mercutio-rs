@@ -37,25 +37,37 @@ The generated command uses conventional kebab-case spellings while retaining the
 names internally:
 
 ```rust,ignore
-use std::convert::Infallible;
-use mercutio::cli::ToolRegistryExt as _;
+use std::{convert::Infallible, process::ExitCode};
+use mercutio::cli::{CliError, ToolRegistryExt as _};
 
 /// Guides callers using weather queries and reminders.
 const INSTRUCTIONS: &str = "Specify a city for weather queries. Reminder times must include a UTC offset.";
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> ExitCode {
     let cli = MyTools::cli("my-tools")
         .about("Check the weather and set reminders")
         .instructions(INSTRUCTIONS)
         .version("1.0.0")
-        .build()?;
-    cli.run(|_session_id, tool| -> Result<String, Infallible> {
+        .build()
+        .expect("tool definitions must produce a valid CLI");
+    let result = cli.run(|_session_id, tool| -> Result<String, Infallible> {
         Ok(match tool {
             MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city),
             MyTools::SetReminder(input) => format!("Reminder set: {}", input.message),
         })
-    })?;
-    Ok(())
+    });
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => report_cli_error(error),
+    }
+}
+
+/// Writes a CLI diagnostic or help request and preserves its exit status.
+fn report_cli_error(error: CliError) -> ExitCode {
+    match error.write_to(std::io::stdout().lock(), std::io::stderr().lock()) {
+        Ok(()) => ExitCode::from(error.exit_code()),
+        Err(_) => ExitCode::FAILURE,
+    }
 }
 ```
 
@@ -166,8 +178,15 @@ framing. In binary mode, accompanying text is written to stderr.
 The parser and runners never terminate the process. [`CliError`](https://docs.rs/mercutio/latest/mercutio/cli/struct.CliError.html)
 reports status `0` for help and version, `2` for usage and input failures, and `1` for handler,
 rendering, decoding, filesystem, and stream failures. Successful payloads go to stdout and
-diagnostics go to stderr. Parse-only applications can use `try_parse_from` or
-`try_parse_matches`, invoke the returned typed tool directly, and provide custom rendering.
+diagnostics go to stderr. Returned errors, including help requests, remain unprinted until the
+caller renders them. The `report_cli_error` helper above selects the correct stream and preserves
+the exit status; a failed write returns status `1`. Do not propagate `CliError` with `?` from
+`main() -> Result`: that reports help as an error and loses the distinction between usage and
+runtime failures. The same helper works with synchronous runners, asynchronous runners, and
+parse-only calls.
+
+Parse-only applications can use `try_parse_from` or `try_parse_matches`, invoke the returned typed
+tool directly, and provide custom rendering.
 
 ### Initialize after parsing
 
@@ -187,7 +206,8 @@ let mut handler = |session_id: Option<McpSessionId>, tool: MyTools| async move {
 let result = cli.run_async(&mut handler).await;
 ```
 
-Handle `result` using the CLI's exit semantics. For custom dispatch or rendering, use
+Match `result` as in the standalone example, returning `ExitCode::SUCCESS` or
+`report_cli_error(error)`. For custom dispatch or rendering, use
 `try_parse()` or `try_parse_matches()` first, then initialize resources only after obtaining
 an `Invocation`. This also keeps malformed arguments from opening a database connection.
 Embedded instructions via `include_str!` require no runtime file access.
@@ -196,34 +216,56 @@ Embedded instructions via `include_str!` require no runtime file access.
 
 Use `attach_to` when native tools share a binary with MCP transports. The entire generated tree is
 placed under the name supplied to `cli`; collisions with application commands are construction
-errors:
+errors. The following fragment belongs in an entry point returning `ExitCode` and reuses
+`report_cli_error` above. `dispatch_native`, `run_stdio_mcp`, and `run_http_mcp` stand for
+application-owned functions returning `ExitCode`; they initialize resources and handle execution
+failures after parsing:
 
 ```rust,ignore
+use std::process::ExitCode;
 use mercutio::cli::ToolRegistryExt as _;
 
 let tools = MyTools::cli("tool")
     .about("Check the weather and set reminders")
     .instructions(INSTRUCTIONS)
     .version("1.0.0")
-    .build()?;
-let command = tools.attach_to(
-    clap::Command::new("my-app")
-        .subcommand(clap::Command::new("mcp"))
-        .subcommand(
-            clap::Command::new("mcp-http")
-                .arg(clap::Arg::new("bind").long("bind").required(true)),
-        ),
-)?;
-let matches = command.get_matches();
+    .build()
+    .expect("tool definitions must produce a valid CLI");
+let command = tools
+    .attach_to(
+        clap::Command::new("my-app")
+            .subcommand_required(true)
+            .subcommand(clap::Command::new("mcp"))
+            .subcommand(
+                clap::Command::new("mcp-http")
+                    .arg(clap::Arg::new("bind").long("bind").required(true)),
+            ),
+    )
+    .expect("application commands must not collide");
+let matches = match command.try_get_matches() {
+    Ok(matches) => matches,
+    Err(error) => {
+        return match error.print() {
+            Ok(()) => ExitCode::from(error.exit_code() as u8),
+            Err(_) => ExitCode::FAILURE,
+        };
+    }
+};
 
 match matches.subcommand() {
     Some(("tool", matches)) => {
-        let invocation = tools.try_parse_matches(matches, std::io::stdin().lock())?;
+        let invocation = match tools.try_parse_matches(matches, std::io::stdin().lock()) {
+            Ok(invocation) => invocation,
+            Err(error) => return report_cli_error(error),
+        };
         let (tool, output_options) = invocation.into_parts();
-        // Invoke the same handler used by the MCP branches, then render as appropriate.
+        dispatch_native(tool, output_options)
     }
-    Some(("mcp", _)) => { /* run stdio MCP */ }
-    Some(("mcp-http", _)) => { /* run HTTP MCP */ }
+    Some(("mcp", _)) => run_stdio_mcp(),
+    Some(("mcp-http", matches)) => {
+        let bind = matches.get_one::<String>("bind").expect("required bind address");
+        run_http_mcp(bind)
+    }
     _ => unreachable!("Clap validates subcommands"),
 }
 ```

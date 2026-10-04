@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Correct CLI examples to preserve help, usage-error, and output-write failure exit statuses.
 - Preserve root-level `additionalProperties` in advertised MCP tool input schemas, retaining unknown-field restrictions and map value schemas.
 - Fix CLI argument generation for complex inputs by using JSON-valued options. Zero-argument commands are unchanged.
 
