@@ -55,7 +55,7 @@ pub enum ImageMode {
 }
 
 /// Presentation settings selected by root command options.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct OutputOptions {
     /// Selected output representation.
     pub mode: OutputMode,
@@ -63,16 +63,6 @@ pub struct OutputOptions {
     pub images: ImageMode,
     /// Optional parent directory for filesystem artifacts.
     pub artifact_dir: Option<PathBuf>,
-}
-
-impl Default for OutputOptions {
-    fn default() -> Self {
-        Self {
-            mode: OutputMode::Artifacts,
-            images: ImageMode::Auto,
-            artifact_dir: None,
-        }
-    }
 }
 
 /// One parsed native tool invocation.
@@ -161,23 +151,28 @@ impl fmt::Display for CliBuildProblem {
 
 /// Error returned while constructing a generated command tree.
 #[derive(Debug, Error)]
-#[error("cannot construct CLI: {message}")]
 pub struct CliBuildError {
-    /// Human-readable aggregate message.
-    message: String,
     /// Every detected construction problem.
     problems: Vec<CliBuildProblem>,
+}
+
+impl fmt::Display for CliBuildError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("cannot construct CLI: ")?;
+        for (index, problem) in self.problems.iter().enumerate() {
+            if index > 0 {
+                f.write_str("; ")?;
+            }
+            fmt::Display::fmt(problem, f)?;
+        }
+        Ok(())
+    }
 }
 
 impl CliBuildError {
     /// Creates an aggregate construction error.
     fn new(problems: Vec<CliBuildProblem>) -> Self {
-        let message = problems
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("; ");
-        Self { message, problems }
+        Self { problems }
     }
 
     /// Returns every detected construction problem.
@@ -401,41 +396,34 @@ impl<R: ToolRegistry> Cli<R> {
             .try_get_one::<String>("input-json-route")
             .ok()
             .flatten();
-        let subcommand = matches.subcommand();
-
-        if json_route.is_some() && subcommand.is_some() {
-            return Err(self.usage_error("--input-json cannot be combined with a tool subcommand"));
-        }
-
-        let (tool_name, arguments) = if let Some(selector) = json_route {
-            let tool = self
-                .tools
-                .iter()
-                .find(|tool| &tool.cli_name == selector)
-                .expect("Clap validates JSON route tool names");
-            let value = read_json_input(&mut input)?;
-            (tool.original_name.as_str(), value)
-        } else if let Some((selected, tool_matches)) = subcommand {
-            let tool = self
-                .tools
-                .iter()
-                .find(|tool| tool.cli_name == selected)
-                .expect("Clap validates tool subcommands");
-            let root = tool
-                .root
+        let (selected, tool_matches) = match (json_route, matches.subcommand()) {
+            (Some(_), Some(_)) => {
+                return Err(
+                    self.usage_error("--input-json cannot be combined with a tool subcommand")
+                );
+            }
+            (Some(selector), None) => (selector.as_str(), None),
+            (None, Some((selected, tool_matches))) => (selected, Some(tool_matches)),
+            (None, None) => return Err(self.usage_error("no tool selected")),
+        };
+        let tool = self
+            .tools
+            .iter()
+            .find(|tool| tool.cli_name == selected)
+            .expect("Clap validates tool selectors");
+        let arguments = if let Some(tool_matches) = tool_matches {
+            tool.root
                 .as_ref()
-                .expect("typed subcommand has root schema");
-            let arguments = root
+                .expect("typed subcommand has root schema")
                 .reconstruct(tool_matches, true)
                 .map_err(|message| self.usage_error(message))?
-                .expect("root object is always active");
-            (tool.original_name.as_str(), arguments)
+                .expect("root object is always active")
         } else {
-            return Err(self.usage_error("no tool selected"));
+            read_json_input(&mut input)?
         };
 
-        let tool =
-            R::parse(tool_name, arguments).map_err(|error| self.usage_error(error.to_string()))?;
+        let tool = R::parse(&tool.original_name, arguments)
+            .map_err(|error| self.usage_error(error.to_string()))?;
         Ok(Invocation { tool, output })
     }
 
