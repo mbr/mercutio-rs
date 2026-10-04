@@ -169,6 +169,29 @@ rendering, decoding, filesystem, and stream failures. Successful payloads go to 
 diagnostics go to stderr. Parse-only applications can use `try_parse_from` or
 `try_parse_matches`, invoke the returned typed tool directly, and provide custom rendering.
 
+### Initialize after parsing
+
+Keep help and input validation independent of application configuration and external services.
+The runners parse arguments before invoking the handler, but cannot defer work done while
+constructing it. Load configuration and connect inside the handler closure, not before calling
+the runner. For example, with application-owned `Config` and `DatabaseHandler` types:
+
+```rust,ignore
+use mercutio::io::{McpSessionId, ToolHandler as _};
+
+let mut handler = |session_id: Option<McpSessionId>, tool: MyTools| async move {
+    let config = Config::load()?;
+    let handler = DatabaseHandler::connect(&config).await?;
+    handler.handle(session_id, tool).await
+};
+let result = cli.run_async(&mut handler).await;
+```
+
+Handle `result` using the CLI's exit semantics. For custom dispatch or rendering, use
+`try_parse()` or `try_parse_matches()` first, then initialize resources only after obtaining
+an `Invocation`. This also keeps malformed arguments from opening a database connection.
+Embedded instructions via `include_str!` require no runtime file access.
+
 ### Nesting in an application
 
 Use `attach_to` when native tools share a binary with MCP transports. The entire generated tree is
@@ -204,6 +227,11 @@ match matches.subcommand() {
     _ => unreachable!("Clap validates subcommands"),
 }
 ```
+
+Construct the application handler inside the selected branch, after `try_parse_matches()`
+succeeds for native commands. Do not load configuration or open connections before parsing
+the application command tree; help for either the application or the `tool` subtree should
+work without them.
 
 A small test that calls `MyTools::cli("tool").build()` is recommended. It catches lossy naming
 collisions such as `filter_tags` versus `filter.tags`, unsupported protocol names, and the reserved

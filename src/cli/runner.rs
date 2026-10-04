@@ -17,6 +17,10 @@ use crate::{
 
 impl<R: ToolRegistry> Cli<R> {
     /// Parses process arguments, invokes a synchronous handler, and renders to process streams.
+    ///
+    /// Parsing completes before invoking the handler. Initialize resources in the
+    /// closure to keep help and input validation independent of configuration and
+    /// external services.
     pub fn run<H, T, E>(&self, handler: H) -> Result<(), CliError>
     where
         H: FnOnce(Option<McpSessionId>, R) -> Result<T, E>,
@@ -28,6 +32,8 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Parses explicit arguments, invokes a synchronous handler, and renders to injected streams.
+    ///
+    /// Like [`Self::run`], invokes the handler only after successful parsing.
     pub fn run_on<I, A, S, O, D, H, T, E>(
         &self,
         args: I,
@@ -51,6 +57,10 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Parses process arguments, invokes an async handler, and renders to process streams.
+    ///
+    /// Parsing completes before invocation, but not before handler construction.
+    /// Initialize resources inside a handler closure, or use [`Self::try_parse`]
+    /// before constructing a handler for custom dispatch and rendering.
     pub async fn run_async<H>(&self, handler: &mut H) -> Result<(), CliError>
     where
         H: MutToolHandler<R>,
@@ -60,6 +70,8 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Parses explicit arguments, invokes an async handler, and renders to injected streams.
+    ///
+    /// Like [`Self::run_async`], invokes the handler only after successful parsing.
     pub async fn run_async_on<I, A, S, O, D, H>(
         &self,
         args: I,
