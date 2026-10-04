@@ -377,10 +377,9 @@ impl<R: ToolRegistry> Cli<R> {
     /// Attaches the complete generated tree below an application-owned command.
     pub fn attach_to(&self, command: Command) -> Result<Command, CliBuildError> {
         let name = self.command.get_name();
-        if command
-            .get_subcommands()
-            .any(|child| child.get_name() == name)
-        {
+        if command.get_subcommands().any(|child| {
+            child.get_name() == name || child.get_all_aliases().any(|alias| alias == name)
+        }) {
             return Err(CliBuildError::new(vec![
                 CliBuildProblem::ApplicationCommandCollision {
                     name: name.to_string(),

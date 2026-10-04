@@ -566,21 +566,33 @@ fn reports_normalization_and_application_collisions() {
     ));
 
     let generated = cli();
-    let parent = clap::Command::new("app").subcommand(clap::Command::new("my-tools"));
-    let error = generated
-        .attach_to(parent)
-        .expect_err("application collision must fail");
-    assert!(matches!(
-        error.problems(),
-        [CliBuildProblem::ApplicationCommandCollision { name }] if name == "my-tools"
-    ));
+    for child in [
+        clap::Command::new("my-tools"),
+        clap::Command::new("mcp").alias("my-tools"),
+        clap::Command::new("mcp").visible_alias("my-tools"),
+    ] {
+        let parent = clap::Command::new("app").subcommand(child);
+        let error = generated
+            .attach_to(parent)
+            .expect_err("application collision must fail");
+        assert!(matches!(
+            error.problems(),
+            [CliBuildProblem::ApplicationCommandCollision { name }] if name == "my-tools"
+        ));
+    }
 }
 
 #[test]
 fn nested_dispatch_and_empty_registries() {
     let generated = cli();
     let command = generated
-        .attach_to(clap::Command::new("app").subcommand(clap::Command::new("mcp")))
+        .attach_to(
+            clap::Command::new("app").subcommand(
+                clap::Command::new("mcp")
+                    .alias("serve")
+                    .visible_alias("server"),
+            ),
+        )
         .expect("unique subtree");
     for (args, input) in [
         (

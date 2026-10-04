@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Reject collisions with visible or hidden application subcommand aliases when attaching a generated CLI.
 - Explain scalar-versus-object union exclusivity and branch selection in the scalar option's long help, without a separate appendix or repeated flag lists.
 
 ## [0.9.0-alpha.2] - 2026-10-04
