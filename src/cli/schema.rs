@@ -155,20 +155,12 @@ fn analyze_object(
                 format!("{path}.{child_name}")
             };
             let child_required = required_names.contains(&child_name.as_str());
-            let child_optional_parent = optional_parent.clone().or_else(|| {
-                (!child_required
-                    && matches!(
-                        classify_schema(child_schema, SchemaPosition::Nested),
-                        SchemaShape::Object
-                    ))
-                .then(|| child_path.clone())
-            });
             let node = analyze_node(
                 child_name,
                 child_schema,
                 child_path,
                 child_required,
-                child_optional_parent,
+                optional_parent.clone(),
                 option_names,
                 problems,
             );
@@ -197,15 +189,18 @@ fn analyze_node(
     problems: &mut Vec<CliBuildProblem>,
 ) -> NodeSpec {
     match classify_schema(schema, SchemaPosition::Nested) {
-        SchemaShape::Object => NodeSpec::Object(analyze_object(
-            schema,
-            Some(name.to_string()),
-            path,
-            required,
-            optional_parent,
-            option_names,
-            problems,
-        )),
+        SchemaShape::Object => {
+            let optional_parent = optional_parent.or_else(|| (!required).then(|| path.clone()));
+            NodeSpec::Object(analyze_object(
+                schema,
+                Some(name.to_string()),
+                path,
+                required,
+                optional_parent,
+                option_names,
+                problems,
+            ))
+        }
         SchemaShape::Value(kind) => NodeSpec::Value(analyze_value(
             name,
             schema,
@@ -480,42 +475,35 @@ fn normalize_path(path: &str) -> Result<String, ()> {
 
 /// Normalizes one protocol name to common command-line spelling.
 pub(super) fn normalize_name(name: &str) -> Result<String, ()> {
-    if name.is_empty()
-        || name
-            .chars()
-            .any(|ch| !ch.is_ascii_alphanumeric() && !matches!(ch, '_' | '-' | '.'))
+    if name
+        .bytes()
+        .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-' | b'.'))
     {
         return Err(());
     }
 
-    let chars = name.chars().collect::<Vec<_>>();
-    let mut output = String::new();
+    let bytes = name.as_bytes();
+    let mut output = String::with_capacity(name.len());
     let mut separator = false;
-    for (index, ch) in chars.iter().copied().enumerate() {
-        if matches!(ch, '_' | '-' | '.') {
+    for (index, byte) in bytes.iter().copied().enumerate() {
+        if matches!(byte, b'_' | b'-' | b'.') {
             separator = !output.is_empty();
             continue;
         }
-        let previous = index
-            .checked_sub(1)
-            .and_then(|index| chars.get(index))
-            .copied();
-        let next = chars.get(index + 1).copied();
-        let camel_boundary = ch.is_ascii_uppercase()
+        let previous = index.checked_sub(1).and_then(|index| bytes.get(index));
+        let next = bytes.get(index + 1);
+        let camel_boundary = byte.is_ascii_uppercase()
             && previous.is_some_and(|previous| {
                 previous.is_ascii_lowercase()
                     || previous.is_ascii_digit()
                     || (previous.is_ascii_uppercase()
                         && next.is_some_and(|next| next.is_ascii_lowercase()))
             });
-        if (separator || camel_boundary) && !output.ends_with('-') {
+        if separator || camel_boundary {
             output.push('-');
         }
         separator = false;
-        output.push(ch.to_ascii_lowercase());
-    }
-    while output.ends_with('-') {
-        output.pop();
+        output.push(char::from(byte.to_ascii_lowercase()));
     }
     (!output.is_empty()).then_some(output).ok_or(())
 }
