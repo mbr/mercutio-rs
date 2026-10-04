@@ -198,14 +198,7 @@ impl Responder {
     /// Use this for protocol-level failures only. After successful tool parsing, this is rarely
     /// needed; domain errors should go through [`respond`](Self::respond) with a `Result::Err`.
     pub fn rpc_error(self, error: impl Into<JsonRpcError>) -> OutgoingMessage {
-        let err: JsonRpcError = error.into();
-        let rpc_error = RpcError {
-            code: err.code(),
-            message: err.to_string(),
-            data: None,
-        };
-        let error_response = JsonrpcErrorResponse::new(rpc_error, Some(self.id));
-        OutgoingMessage(JsonrpcMessage::ErrorResponse(error_response))
+        error.into().into_response(self.id)
     }
 }
 
@@ -518,7 +511,7 @@ fn describe_message(msg: &JsonrpcMessage) -> String {
 mod tests {
     use rust_mcp_schema::{JsonrpcMessage, JsonrpcNotification, JsonrpcRequest, RequestId};
 
-    use crate::{McpServer, NoTools, Output};
+    use crate::{JsonRpcError, McpServer, NoTools, Output, Responder};
 
     fn test_server() -> McpServer<NoTools> {
         McpServer::<NoTools>::builder()
@@ -573,45 +566,68 @@ mod tests {
         assert!(server.is_ready());
     }
 
+    /// Rejects disabled methods without changing connection state.
     #[test]
-    fn tool_list_returns_error_for_no_tools() {
+    fn disabled_tools_return_method_not_found() {
         let mut server = test_server();
         initialize_server(&mut server);
 
-        let list_req = JsonrpcMessage::Request(JsonrpcRequest::new(
-            RequestId::String("2".into()),
-            "tools/list".into(),
-            None,
-        ));
-        let output = server.handle(list_req);
-        match output {
-            Output::Send(msg) => {
-                assert!(matches!(msg.as_inner(), JsonrpcMessage::ErrorResponse(_)));
-            }
-            _ => panic!("expected Send with error"),
+        for method in ["tools/list", "tools/call"] {
+            let request = JsonrpcMessage::Request(JsonrpcRequest::new(
+                RequestId::String("2".into()),
+                method.into(),
+                None,
+            ));
+            let Output::Send(response) = server.handle(request) else {
+                panic!("expected method-not-found response");
+            };
+            let response =
+                serde_json::to_value(response.into_inner()).expect("serialized response");
+            assert_eq!(
+                response,
+                serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": "2",
+                    "error": {"code": -32601, "message": format!("method not found: {method}")}
+                })
+            );
+            assert!(server.is_ready());
         }
     }
 
+    /// Preserves the caller's request ID and the protocol error classification.
     #[test]
-    fn tool_call_returns_error_for_no_tools() {
-        let mut server = test_server();
-        initialize_server(&mut server);
-
-        let call_params: serde_json::Map<String, serde_json::Value> =
-            serde_json::from_str(r#"{ "name": "test_tool", "arguments": { "arg1": "value1" } }"#)
-                .expect("valid JSON");
-
-        let call_req = JsonrpcMessage::Request(JsonrpcRequest::new(
-            RequestId::String("3".into()),
-            "tools/call".into(),
-            Some(call_params),
-        ));
-        let output = server.handle(call_req);
-        match output {
-            Output::Send(msg) => {
-                assert!(matches!(msg.as_inner(), JsonrpcMessage::ErrorResponse(_)));
-            }
-            _ => panic!("expected Send with error"),
+    fn responder_preserves_rpc_errors() {
+        for (error, code) in [
+            (
+                JsonRpcError::MethodNotFound {
+                    msg: "missing".into(),
+                },
+                -32601,
+            ),
+            (
+                JsonRpcError::InvalidParams {
+                    msg: "invalid".into(),
+                },
+                -32602,
+            ),
+            (
+                JsonRpcError::InternalError {
+                    msg: "failed".into(),
+                },
+                -32603,
+            ),
+        ] {
+            let message = error.to_string();
+            let response = Responder::new(RequestId::String("request-id".into())).rpc_error(error);
+            let response =
+                serde_json::to_value(response.into_inner()).expect("serialized response");
+            assert_eq!(
+                response,
+                serde_json::json!({
+                    "jsonrpc": "2.0", "id": "request-id", "error": {"code": code, "message": message}
+                })
+            );
         }
     }
 
