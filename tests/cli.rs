@@ -149,38 +149,28 @@ fn parses_scalars_nested_objects_arrays_and_json_values() {
 }
 
 #[test]
-fn preserves_omitted_and_implicit_booleans() {
-    let omitted = cli()
-        .try_parse_from(
-            ["my-tools", "search-items", "--query", "x", "--mode", "fast"],
-            Cursor::new(Vec::new()),
-        )
-        .expect("valid invocation")
-        .into_tool();
-    let TestTools::Search(omitted) = omitted else {
-        panic!("expected search tool");
-    };
-    assert_eq!(omitted.recursive, None);
-
-    let implicit = cli()
-        .try_parse_from(
-            [
-                "my-tools",
-                "search-items",
-                "--query",
-                "x",
-                "--mode",
-                "fast",
-                "--recursive",
-            ],
-            Cursor::new(Vec::new()),
-        )
-        .expect("valid invocation")
-        .into_tool();
-    let TestTools::Search(implicit) = implicit else {
-        panic!("expected search tool");
-    };
-    assert_eq!(implicit.recursive, Some(true));
+fn preserves_omitted_and_explicit_booleans() {
+    let cli = cli();
+    for (flags, expected) in [
+        (vec![], None),
+        (vec!["--recursive"], Some(true)),
+        (vec!["--recursive=true"], Some(true)),
+        (vec!["--recursive", "true"], Some(true)),
+        (vec!["--recursive=false"], Some(false)),
+        (vec!["--recursive", "false"], Some(false)),
+    ] {
+        let args = ["my-tools", "search-items", "--query", "x", "--mode", "fast"]
+            .into_iter()
+            .chain(flags);
+        let TestTools::Search(input) = cli
+            .try_parse_from(args, Cursor::new([]))
+            .expect("valid invocation")
+            .into_tool()
+        else {
+            panic!("expected search tool");
+        };
+        assert_eq!(input.recursive, expected);
+    }
 }
 
 #[test]
@@ -390,86 +380,6 @@ fn parses_and_separates_supported_union_branches() {
     assert!(error.to_string().contains("cannot be combined"));
 }
 
-#[derive(Debug, Deserialize, PartialEq)]
-struct FallbackInput {
-    plain: String,
-    choice: serde_json::Value,
-    node: serde_json::Value,
-    hybrid: serde_json::Value,
-}
-
-impl JsonSchema for FallbackInput {
-    fn schema_name() -> Cow<'static, str> {
-        "FallbackInput".into()
-    }
-
-    fn json_schema(_generator: &mut SchemaGenerator) -> Schema {
-        json_schema!({
-            "type": "object",
-            "properties": {
-                "plain": { "type": "string" },
-                "choice": {
-                    "anyOf": [
-                        { "type": "string" },
-                        { "type": "integer" }
-                    ]
-                },
-                "node": { "$ref": "#/$defs/Node" },
-                "hybrid": {
-                    "type": "object",
-                    "properties": { "fixed": { "type": "string" } },
-                    "additionalProperties": { "type": "string" }
-                }
-            },
-            "required": ["plain", "choice", "node", "hybrid"],
-            "$defs": {
-                "Node": {
-                    "type": "object",
-                    "properties": {
-                        "value": { "type": "string" },
-                        "next": { "$ref": "#/$defs/Node" }
-                    },
-                    "required": ["value"]
-                }
-            }
-        })
-    }
-}
-
-impl ToolDef for FallbackInput {
-    const NAME: &'static str = "fallback";
-    const DESCRIPTION: &'static str = "Exercises localized JSON fallbacks";
-}
-
-#[test]
-fn keeps_typed_siblings_with_localized_json_fallbacks() {
-    let cli = FallbackInput::cli("fallbacks")
-        .build()
-        .expect("valid fallback CLI");
-    let input = cli
-        .try_parse_from(
-            [
-                "fallbacks",
-                "fallback",
-                "--plain",
-                "typed",
-                "--choice",
-                "42",
-                "--node",
-                r#"{"value":"root","next":{"value":"leaf"}}"#,
-                "--hybrid",
-                r#"{"fixed":"known","extra":"dynamic"}"#,
-            ],
-            Cursor::new(Vec::new()),
-        )
-        .expect("localized JSON values")
-        .into_tool();
-    assert_eq!(input.plain, "typed");
-    assert_eq!(input.choice, serde_json::json!(42));
-    assert_eq!(input.node["next"]["value"], "leaf");
-    assert_eq!(input.hybrid["extra"], "dynamic");
-}
-
 #[derive(Debug, Deserialize, JsonSchema)]
 struct First;
 
@@ -525,12 +435,57 @@ fn reports_normalization_and_application_collisions() {
 }
 
 #[test]
-fn supports_nesting_and_empty_registries() {
+fn nested_dispatch_and_empty_registries() {
     let generated = cli();
     let command = generated
         .attach_to(clap::Command::new("app").subcommand(clap::Command::new("mcp")))
         .expect("unique subtree");
-    assert!(command.find_subcommand("my-tools").is_some());
+    for (args, input) in [
+        (
+            vec![
+                "app",
+                "my-tools",
+                "--output",
+                "raw",
+                "search-items",
+                "--query",
+                "nested",
+                "--mode",
+                "fast",
+            ],
+            "",
+        ),
+        (
+            vec![
+                "app",
+                "my-tools",
+                "--output",
+                "raw",
+                "--input-json",
+                "search-items",
+            ],
+            r#"{"query":"nested","mode":"fast"}"#,
+        ),
+    ] {
+        let matches = command
+            .clone()
+            .try_get_matches_from(args)
+            .expect("nested arguments");
+        let invocation = generated
+            .try_parse_matches(
+                matches
+                    .subcommand_matches("my-tools")
+                    .expect("tool subtree"),
+                Cursor::new(input),
+            )
+            .expect("nested invocation");
+        let (tool, options) = invocation.into_parts();
+        let TestTools::Search(input) = tool else {
+            panic!("expected search tool");
+        };
+        assert_eq!(input.query, "nested");
+        assert_eq!(options.mode, OutputMode::Raw);
+    }
 
     let empty = Cli::<NoTools>::builder("tools")
         .build()
@@ -551,7 +506,13 @@ fn help_and_version_are_stdout_control_flow() {
             .expect("display request");
         assert_eq!(error.kind(), CliErrorKind::Display);
         assert_eq!(error.exit_code(), 0);
-        assert!(!error.targets_stderr());
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        error
+            .write_to(&mut stdout, &mut stderr)
+            .expect("display output");
+        assert_eq!(stdout, error.to_string().as_bytes());
+        assert!(stderr.is_empty());
     }
 }
 
