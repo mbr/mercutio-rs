@@ -95,72 +95,49 @@ pub(super) fn root_command<R: ToolRegistry>(
 
 /// Generates one tool subcommand.
 fn tool_command(tool: &ToolSpec) -> Command {
-    let mut command = Command::new(tool.cli_name.clone())
+    let command = Command::new(tool.cli_name.clone())
         .about(tool.description.clone())
         .disable_help_subcommand(true);
     let root = tool.root.as_ref().expect("typed tool has a root schema");
-    let mut values = Vec::new();
-    collect_values(root, &mut values);
-    for value in values {
-        command = command.arg(value_arg(value));
-    }
-    let mut notes = Vec::new();
-    collect_union_help(root, None, &mut notes);
-    if !notes.is_empty() {
-        command = command.after_long_help(format!(
-            "Alternatives (do not combine forms):\n{}",
-            notes.join("\n")
-        ));
-    }
-    command
+    add_object_args(command, root, None)
 }
 
-/// Collects union selection rules with their enclosing activation conditions.
-fn collect_union_help(object: &ObjectSpec, required_when: Option<&str>, notes: &mut Vec<String>) {
+/// Adds flattened options with union guidance on the scalar alternatives.
+fn add_object_args(
+    mut command: Command,
+    object: &ObjectSpec,
+    required_when: Option<&str>,
+) -> Command {
     for child in &object.children {
         match child {
             NodeSpec::Object(object) => {
                 let condition =
                     (!object.required).then(|| format!("`{}` is activated", object.path));
-                collect_union_help(object, condition.as_deref().or(required_when), notes);
+                command = add_object_args(command, object, condition.as_deref().or(required_when));
             }
+            NodeSpec::Value(value) => command = command.arg(value_arg(value)),
             NodeSpec::Union(union) => {
-                let mut values = Vec::new();
-                collect_values(&union.object, &mut values);
-                let options = values
-                    .iter()
-                    .map(|value| format!("`--{}`", value.cli_name))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let selection = match (union.required, required_when) {
-                    (false, _) => "optional".into(),
-                    (true, None) => "required".into(),
-                    (true, Some(condition)) => format!("required when {condition}"),
-                };
-                notes.push(format!(
-                    "  `{}`: `--{}` OR object options ({options}); {selection}",
-                    union.scalar.path, union.scalar.cli_name,
-                ));
+                let mut help = format!(
+                    "{}\n\nAlternative to the object form; do not combine them.",
+                    option_long_help(&union.scalar)
+                );
+                if union.required {
+                    match required_when {
+                        Some(condition) => {
+                            help.push_str(&format!(" One form is required when {condition}."));
+                        }
+                        None => help.push_str(" One form is required."),
+                    }
+                } else {
+                    help.push_str(" Both forms may be omitted.");
+                }
+                command = command.arg(value_arg(&union.scalar).long_help(help));
                 let condition = format!("the object form of `{}` is selected", union.scalar.path);
-                collect_union_help(&union.object, Some(&condition), notes);
-            }
-            NodeSpec::Value(_) => {}
-        }
-    }
-}
-
-/// Collects flattened options from an object tree.
-fn collect_values<'a>(object: &'a ObjectSpec, values: &mut Vec<&'a ValueSpec>) {
-    for child in &object.children {
-        match child {
-            NodeSpec::Object(object) => collect_values(object, values),
-            NodeSpec::Value(value) => values.push(value),
-            NodeSpec::Union(union) => {
-                values.push(&union.scalar);
-                collect_values(&union.object, values);
+                command = add_object_args(command, &union.object, Some(&condition));
             }
         }
     }
+    command
 }
 
 /// Generates one Clap option.

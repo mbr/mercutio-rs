@@ -445,7 +445,7 @@ impl ToolDef for UnionHelpInput {
     const DESCRIPTION: &'static str = "Chooses nested representations";
 }
 
-/// Explains each union only in long tool help, with precise activation conditions.
+/// Keeps union guidance beside scalar options, only in long tool help.
 #[test]
 fn union_help_describes_exclusivity_and_conditional_selection() {
     let command = UnionHelpInput::cli("chooser")
@@ -466,19 +466,16 @@ fn union_help_describes_exclusivity_and_conditional_selection() {
             .try_get_matches_from(args)
             .expect_err("help request")
             .to_string();
-        assert!(
-            !help.contains("Alternatives (do not combine forms):"),
-            "{help}"
-        );
+        assert!(!help.contains("Alternative to the object form"), "{help}");
     }
     let help = command
         .try_get_matches_from(["app", "chooser", "choose", "--help"])
         .expect_err("long help request")
         .to_string();
-    let start = help
-        .find("Alternatives (do not combine forms):")
-        .expect("union selection notes");
-    insta::assert_snapshot!(help[start..].trim_end());
+    assert!(!help.contains("Alternatives (do not combine forms):"));
+    insta::with_settings!({filters => vec![(r"(?m)[ \t]+$", "")]}, {
+        insta::assert_snapshot!(help);
+    });
 }
 
 #[test]

@@ -1,11 +1,71 @@
 ---
 source: tests/cli.rs
-expression: "help[start..].trim_end()"
+expression: help
 ---
-Alternatives (do not combine forms):
-  `required_choice`: `--required-choice` OR object options (`--required-choice-label`, `--required-choice-count`); required
-  `optional_choice`: `--optional-choice` OR object options (`--optional-choice-label`, `--optional-choice-count`); optional
-  `settings.outer_choice`: `--settings-outer-choice` OR object options (`--settings-outer-choice-choice`, `--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`); required when `settings` is activated
-  `settings.outer_choice.choice`: `--settings-outer-choice-choice` OR object options (`--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`); required when the object form of `settings.outer_choice` is selected
-  `settings.required_group.choice`: `--settings-required-group-choice` OR object options (`--settings-required-group-choice-label`, `--settings-required-group-choice-count`); required when `settings` is activated
-  `settings.optional_group.choice`: `--settings-optional-group-choice` OR object options (`--settings-optional-group-choice-label`, `--settings-optional-group-choice-count`); required when `settings.optional_group` is activated
+Chooses nested representations
+
+Usage: app chooser choose [OPTIONS]
+
+Options:
+      --required-choice <STRING>
+          Text or detailed selection.
+
+          Alternative to the object form; do not combine them. One form is required.
+
+      --required-choice-label <STRING>
+          Sets `required_choice.label` Required when `required_choice` is activated.
+
+      --required-choice-count <INTEGER>
+          Sets `required_choice.count` Minimum: 0.
+
+      --optional-choice <STRING>
+          Text or detailed selection.
+
+          Alternative to the object form; do not combine them. Both forms may be omitted.
+
+      --optional-choice-label <STRING>
+          Sets `optional_choice.label` Required when `optional_choice` is activated.
+
+      --optional-choice-count <INTEGER>
+          Sets `optional_choice.count` Minimum: 0.
+
+      --settings-outer-choice <STRING>
+          Sets `settings.outer_choice`
+
+          Alternative to the object form; do not combine them. One form is required when `settings` is activated.
+
+      --settings-outer-choice-choice <STRING>
+          Text or detailed selection.
+
+          Alternative to the object form; do not combine them. One form is required when the object form of `settings.outer_choice` is selected.
+
+      --settings-outer-choice-choice-label <STRING>
+          Sets `settings.outer_choice.choice.label` Required when `settings` is activated.
+
+      --settings-outer-choice-choice-count <INTEGER>
+          Sets `settings.outer_choice.choice.count` Minimum: 0.
+
+      --settings-required-group-choice <STRING>
+          Text or detailed selection.
+
+          Alternative to the object form; do not combine them. One form is required when `settings` is activated.
+
+      --settings-required-group-choice-label <STRING>
+          Sets `settings.required_group.choice.label` Required when `settings` is activated.
+
+      --settings-required-group-choice-count <INTEGER>
+          Sets `settings.required_group.choice.count` Minimum: 0.
+
+      --settings-optional-group-choice <STRING>
+          Text or detailed selection.
+
+          Alternative to the object form; do not combine them. One form is required when `settings.optional_group` is activated.
+
+      --settings-optional-group-choice-label <STRING>
+          Sets `settings.optional_group.choice.label` Required when `settings` is activated.
+
+      --settings-optional-group-choice-count <INTEGER>
+          Sets `settings.optional_group.choice.count` Minimum: 0.
+
+  -h, --help
+          Print help (see a summary with '-h')

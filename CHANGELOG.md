@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Add compact CLI tool `--help` notes explaining scalar-versus-object union exclusivity and required, optional, or conditional branch selection.
+- Explain scalar-versus-object union exclusivity and branch selection in the scalar option's long help, without a separate appendix or repeated flag lists.
 
 ## [0.9.0-alpha.2] - 2026-10-04
 
