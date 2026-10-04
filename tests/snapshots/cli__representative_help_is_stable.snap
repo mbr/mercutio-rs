@@ -1,8 +1,31 @@
 ---
 source: tests/cli.rs
-expression: "format!(\"{root_help}\\n--- TOOL ---\\n{tool_help}\")"
+expression: "format!(\"{short_help}\\n--- LONG ---\\n{long_help}\\n--- TOOL ---\\n{tool_help}\")"
 ---
-Invokes local MCP tool handlers as native commands. Presentation options must precede the tool command. --input-json <TOOL> reads one complete JSON object from standard input instead of using typed tool options.
+Search indexed items and check service health
+
+Usage: my-tools [OPTIONS] [COMMAND]
+
+Commands:
+  search-items  Searches indexed items
+  http-server   Checks service health
+
+Options:
+      --output <MODE>       Selects artifacts, structured, raw, or binary output [default: artifacts] [possible values: artifacts, structured, raw, binary]
+      --images <MODE>       Controls Kitty image display in artifact output [default: auto] [possible values: auto, kitty, off]
+      --artifact-dir <DIR>  Parent directory for artifact output
+      --input-json <TOOL>   Reads the selected tool's JSON object from stdin [possible values: search-items, http-server]
+  -h, --help                Print help (see more with '--help')
+  -V, --version             Print version
+
+Use --help for the full reference.
+
+--- LONG ---
+Search indexed items and check service health
+
+Search by query and refine results with filters.
+
+Use fast mode for interactive searches.
 
 Usage: my-tools [OPTIONS] [COMMAND]
 
@@ -12,7 +35,7 @@ Commands:
 
 Options:
       --output <MODE>
-          Selects output: artifacts renders text and saves binary blocks; structured writes structuredContent JSON; raw writes the complete MCP result as JSON; binary writes exactly one decoded binary block.
+          Selects output: artifacts renders text and saves binary blocks; structured writes structuredContent JSON; raw writes the complete MCP result as JSON; binary writes exactly one decoded binary block. Output options must precede the command.
           
           [default: artifacts]
           [possible values: artifacts, structured, raw, binary]
@@ -27,7 +50,7 @@ Options:
           Parent directory for artifact output. A private unique invocation directory is created beneath it.
 
       --input-json <TOOL>
-          Selects a tool and reads exactly one complete JSON object from standard input through EOF. This route cannot be combined with a tool subcommand.
+          Selects a command and reads exactly one complete JSON object from standard input through EOF. Cannot be combined with a command subcommand.
           
           [possible values: search-items, http-server]
 

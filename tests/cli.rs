@@ -3,7 +3,7 @@
 use std::{
     borrow::Cow,
     collections::BTreeMap,
-    io::{self, Cursor, Write},
+    io::{self, Cursor, Read, Write},
 };
 
 use mercutio::{
@@ -75,17 +75,83 @@ fn cli() -> Cli<TestTools> {
         .expect("valid CLI")
 }
 
+/// Keeps the application reference above the generated command and option index.
 #[test]
 fn representative_help_is_stable() {
-    let mut root = cli().command();
-    let root_help = root.render_long_help().to_string();
+    let mut root = TestTools::cli("my-tools")
+        .about("Search indexed items and check service health")
+        .instructions("Search by query and refine results with filters.\n\nUse fast mode for interactive searches.")
+        .version("1.0.0")
+        .build()
+        .expect("valid CLI")
+        .command()
+        .color(clap::ColorChoice::Never)
+        .term_width(80);
+    let short_help = root.render_help().to_string();
+    let long_help = root.render_long_help().to_string();
     let mut search = root
         .find_subcommand_mut("search-items")
         .expect("search command")
         .clone();
     let tool_help = search.render_long_help().to_string();
 
-    insta::assert_snapshot!(format!("{root_help}\n--- TOOL ---\n{tool_help}"));
+    insta::assert_snapshot!(format!(
+        "{short_help}\n--- LONG ---\n{long_help}\n--- TOOL ---\n{tool_help}"
+    ));
+}
+
+/// Allows either help field to be omitted, including on empty nested registries.
+#[test]
+fn optional_help_metadata_works_when_nested() {
+    for (about, instructions, short_intro, long_intro) in [
+        (None, None, "", ""),
+        (Some(""), Some(" \n\t"), "", ""),
+        (Some("  \t"), Some(""), "", ""),
+        (Some("Summary"), None, "Summary\n\n", "Summary\n\n"),
+        (
+            None,
+            Some("Reference\n\n  Detail"),
+            "",
+            "Reference\n\n  Detail\n\n",
+        ),
+        (
+            Some("Summary"),
+            Some("Reference"),
+            "Summary\n\n",
+            "Summary\n\nReference\n\n",
+        ),
+    ] {
+        let mut builder = Cli::<NoTools>::builder("tool");
+        if let Some(about) = about {
+            builder = builder.about(about);
+        }
+        if let Some(instructions) = instructions {
+            builder = builder.instructions(instructions);
+        }
+        let cli = builder.build().expect("optional metadata");
+        let command = cli
+            .attach_to(clap::Command::new("app").color(clap::ColorChoice::Never))
+            .expect("nested CLI");
+        for (flag, intro) in [("-h", short_intro), ("--help", long_intro)] {
+            let error = command
+                .clone()
+                .try_get_matches_from(["app", "tool", flag])
+                .expect_err("help request");
+            let help = error.to_string();
+            assert!(
+                help.starts_with(&format!("{intro}Usage: app tool")),
+                "{help}"
+            );
+            assert!(!help.contains("--input-json"));
+            assert_eq!(
+                help.contains("Use --help for the full reference."),
+                flag == "-h"
+            );
+            if flag == "-h" {
+                assert!(!help.contains("Reference"));
+            }
+        }
+    }
 }
 
 #[test]
@@ -497,17 +563,34 @@ fn nested_dispatch_and_empty_registries() {
     assert_eq!(error.exit_code(), 2);
 }
 
+/// Fails if a display-only request attempts to consume input.
+struct UnreadableInput;
+
+impl Read for UnreadableInput {
+    fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+        panic!("help must not read input");
+    }
+}
+
+/// Returns help without reading input, invoking the handler, or printing eagerly.
 #[test]
 fn help_and_version_are_stdout_control_flow() {
-    for argument in ["--help", "--version"] {
-        let error = cli()
-            .try_parse_from(["my-tools", argument], Cursor::new(Vec::new()))
-            .err()
-            .expect("display request");
-        assert_eq!(error.kind(), CliErrorKind::Display);
-        assert_eq!(error.exit_code(), 0);
+    for argument in ["-h", "--help", "--version"] {
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
+        let error = cli()
+            .run_on(
+                ["my-tools", argument],
+                UnreadableInput,
+                &mut stdout,
+                &mut stderr,
+                |_, _| -> Result<&str, &str> { panic!("help must not invoke the handler") },
+            )
+            .expect_err("display request");
+        assert_eq!(error.kind(), CliErrorKind::Display);
+        assert_eq!(error.exit_code(), 0);
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
         error
             .write_to(&mut stdout, &mut stderr)
             .expect("display output");

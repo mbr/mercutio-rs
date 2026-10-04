@@ -6,28 +6,29 @@ use clap::{
 };
 use serde_json::Value;
 
-use super::schema::{NodeSpec, ObjectSpec, ScalarKind, ToolSpec, ValueKind, ValueSpec};
+use super::{
+    CliBuilder,
+    schema::{NodeSpec, ObjectSpec, ScalarKind, ToolSpec, ValueKind, ValueSpec},
+};
+use crate::ToolRegistry;
 
 /// Generates the root command and its typed tool subcommands.
-pub(super) fn root_command(name: String, version: Option<String>, tools: &[ToolSpec]) -> Command {
-    let whole_input_only = tools
-        .iter()
-        .filter(|tool| tool.root.is_none())
-        .map(|tool| tool.cli_name.as_str())
-        .collect::<Vec<_>>();
-    let mut long_about = String::from(
-        "Invokes local MCP tool handlers as native commands. Presentation options must \
-         precede the tool command. --input-json <TOOL> reads one complete JSON object from \
-         standard input instead of using typed tool options.",
-    );
-    if !whole_input_only.is_empty() {
-        long_about.push_str(" Whole-input-only tools: ");
-        long_about.push_str(&whole_input_only.join(", "));
-        long_about.push('.');
-    }
+pub(super) fn root_command<R: ToolRegistry>(
+    name: String,
+    builder: CliBuilder<R>,
+    tools: &[ToolSpec],
+) -> Command {
+    let about = builder.about.filter(|text| !text.trim().is_empty());
+    let long_about = builder
+        .instructions
+        .filter(|text| !text.trim().is_empty())
+        .map(|instructions| match &about {
+            Some(about) => format!("{about}\n\n{instructions}"),
+            None => instructions,
+        });
     let mut command = Command::new(name)
-        .about("Invokes local MCP tool handlers as native commands")
-        .long_about(long_about)
+        .after_help("Use --help for the full reference.")
+        .after_long_help("")
         .disable_help_subcommand(true)
         .arg(output_arg())
         .arg(image_arg())
@@ -41,10 +42,30 @@ pub(super) fn root_command(name: String, version: Option<String>, tools: &[ToolS
                      directory is created beneath it.",
                 ),
         );
-    if let Some(version) = version {
+    if let Some(about) = about {
+        command = command.about(about);
+    }
+    if let Some(long_about) = long_about {
+        command = command.long_about(long_about);
+    }
+    if let Some(version) = builder.version {
         command = command.version(version);
     }
     if !tools.is_empty() {
+        let whole_input_only = tools
+            .iter()
+            .filter(|tool| tool.root.is_none())
+            .map(|tool| tool.cli_name.as_str())
+            .collect::<Vec<_>>();
+        let mut input_help = String::from(
+            "Selects a command and reads exactly one complete JSON object from standard \
+             input through EOF. Cannot be combined with a command subcommand.",
+        );
+        if !whole_input_only.is_empty() {
+            input_help.push_str("\n\nWhole-input-only commands: ");
+            input_help.push_str(&whole_input_only.join(", "));
+            input_help.push('.');
+        }
         let values = tools
             .iter()
             .map(|tool| tool.cli_name.clone())
@@ -55,10 +76,7 @@ pub(super) fn root_command(name: String, version: Option<String>, tools: &[ToolS
                 .value_name("TOOL")
                 .value_parser(PossibleValuesParser::new(values))
                 .help("Reads the selected tool's JSON object from stdin")
-                .long_help(
-                    "Selects a tool and reads exactly one complete JSON object from standard \
-                     input through EOF. This route cannot be combined with a tool subcommand.",
-                ),
+                .long_help(input_help),
         );
     }
     for tool in tools {
@@ -224,7 +242,7 @@ fn output_arg() -> Arg {
         .long_help(
             "Selects output: artifacts renders text and saves binary blocks; structured writes \
              structuredContent JSON; raw writes the complete MCP result as JSON; binary writes \
-             exactly one decoded binary block.",
+             exactly one decoded binary block. Output options must precede the command.",
         )
 }
 

@@ -300,12 +300,9 @@ fn map_roots_are_whole_input_only() {
     let cli = MapRoot::cli("tools").build().expect("valid CLI");
     let mut command = cli.command();
     assert!(command.find_subcommand("map-root").is_none());
-    assert!(
-        command
-            .render_long_help()
-            .to_string()
-            .contains("Whole-input-only tools: map-root")
-    );
+    let help = command.render_long_help().to_string();
+    assert!(help.starts_with("Usage: tools"));
+    assert!(help.contains("Whole-input-only commands: map-root"));
     let input = cli
         .try_parse_from(
             ["tools", "--input-json", "map-root"],

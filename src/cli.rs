@@ -258,11 +258,34 @@ pub struct CliBuilder<R: ToolRegistry> {
     name: String,
     /// Optional root version.
     version: Option<String>,
+    /// Optional application summary.
+    about: Option<String>,
+    /// Optional application reference.
+    instructions: Option<String>,
     /// Registry marker.
     marker: PhantomData<R>,
 }
 
 impl<R: ToolRegistry> CliBuilder<R> {
+    /// Sets an application summary for short and long root help.
+    ///
+    /// Recommended for application-specific help. Omitted or whitespace-only summaries
+    /// produce no introductory description.
+    pub fn about(mut self, about: impl Into<String>) -> Self {
+        self.about = Some(about.into());
+        self
+    }
+
+    /// Sets the application reference shown after the summary in long root help.
+    ///
+    /// Recommended for usage guidance; the same text can be passed to
+    /// [`crate::McpServerBuilder::instructions`]. Omitted or whitespace-only instructions
+    /// produce no reference. Nonempty text is retained without Markdown rendering.
+    pub fn instructions(mut self, instructions: impl Into<String>) -> Self {
+        self.instructions = Some(instructions.into());
+        self
+    }
+
     /// Sets the root command version.
     pub fn version(mut self, version: impl Into<String>) -> Self {
         self.version = Some(version.into());
@@ -291,6 +314,8 @@ impl<R: ToolRegistry> Cli<R> {
         CliBuilder {
             name: name.into(),
             version: None,
+            about: None,
+            instructions: None,
             marker: PhantomData,
         }
     }
@@ -336,7 +361,7 @@ impl<R: ToolRegistry> Cli<R> {
             return Err(CliBuildError::new(problems));
         }
 
-        let command = root_command(root_name, builder.version, &tools);
+        let command = root_command(root_name, builder, &tools);
         Ok(Self {
             command,
             tools,
