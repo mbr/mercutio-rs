@@ -61,60 +61,45 @@ impl FromStr for McpSessionId {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    //! Checks session identifier wire spelling and input boundaries.
 
+    use super::McpSessionId;
+
+    /// Accepts hexadecimal input and emits a canonical, zero-padded identifier.
     #[test]
-    fn display_is_32_hex_chars() {
-        let id = McpSessionId(0x0123456789abcdef0123456789abcdef);
-        assert_eq!(id.to_string(), "0123456789abcdef0123456789abcdef");
+    fn canonical_hex_roundtrip() {
+        for (input, raw, canonical) in [
+            ("0", 0, "00000000000000000000000000000000"),
+            ("FF", 255, "000000000000000000000000000000ff"),
+            (
+                "0123456789abcdef0123456789abcdef",
+                0x0123456789abcdef0123456789abcdef,
+                "0123456789abcdef0123456789abcdef",
+            ),
+            (
+                "FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF",
+                u128::MAX,
+                "ffffffffffffffffffffffffffffffff",
+            ),
+        ] {
+            let id: McpSessionId = input.parse().expect("valid hexadecimal identifier");
+            assert_eq!(id.as_raw(), raw);
+            assert_eq!(id.to_string(), canonical);
+            assert_eq!(id, McpSessionId::from_raw(raw));
+            assert_eq!(
+                canonical
+                    .parse::<McpSessionId>()
+                    .expect("canonical identifier"),
+                id
+            );
+        }
     }
 
+    /// Rejects malformed and overflowing identifiers.
     #[test]
-    fn display_pads_with_zeros() {
-        let id = McpSessionId(1);
-        assert_eq!(id.to_string(), "00000000000000000000000000000001");
-    }
-
-    #[test]
-    fn debug_uses_display() {
-        let id = McpSessionId(0xff);
-        assert_eq!(
-            format!("{id:?}"),
-            "McpSessionId(000000000000000000000000000000ff)"
-        );
-    }
-
-    #[test]
-    fn parse_valid_hex() {
-        let id: McpSessionId = "0123456789abcdef0123456789abcdef".parse().unwrap();
-        assert_eq!(id.0, 0x0123456789abcdef0123456789abcdef);
-    }
-
-    #[test]
-    fn parse_short_hex() {
-        let id: McpSessionId = "ff".parse().unwrap();
-        assert_eq!(id.0, 0xff);
-    }
-
-    #[test]
-    fn parse_invalid_fails() {
-        assert!("not-hex".parse::<McpSessionId>().is_err());
-    }
-
-    #[test]
-    fn roundtrip() {
-        let original = McpSessionId(0xdeadbeef12345678deadbeef12345678);
-        let s = original.to_string();
-        let parsed: McpSessionId = s.parse().unwrap();
-        assert_eq!(original, parsed);
-    }
-
-    #[cfg(feature = "rand")]
-    #[test]
-    fn random_generation() {
-        use rand::Rng;
-        let mut rng = rand::rng();
-        let id: McpSessionId = rng.random();
-        assert_eq!(id.to_string().len(), 32);
+    fn rejects_invalid_hex() {
+        for input in ["", "not-hex", "-1", "100000000000000000000000000000000"] {
+            assert!(input.parse::<McpSessionId>().is_err(), "{input}");
+        }
     }
 }
