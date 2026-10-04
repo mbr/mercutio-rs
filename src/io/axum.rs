@@ -62,7 +62,7 @@ use axum::{
     extract::{FromRequestParts, State},
     http::{HeaderValue, StatusCode, header, header::ToStrError, request::Parts},
     response::{IntoResponse, Response},
-    routing::{delete, get, post},
+    routing::post,
 };
 use rand::Rng;
 use thiserror::Error;
@@ -346,9 +346,12 @@ where
         };
 
         Router::new()
-            .route("/", post(handle_post::<R, H, S>))
-            .route("/", get(handle_get))
-            .route("/", delete(handle_delete::<R, H, S>))
+            .route(
+                "/",
+                post(handle_post::<R, H, S>)
+                    .get(handle_get)
+                    .delete(handle_delete::<R, H, S>),
+            )
             .with_state(state)
     }
 }
@@ -442,10 +445,6 @@ where
         }
     };
 
-    if matches!(&output, Output::ProtocolError(_)) {
-        state.storage.remove(session_id).await;
-    }
-
     match output {
         Output::Send(msg) => json_response(&msg, session_id),
         Output::ToolCall { tool, responder } => {
@@ -454,6 +453,7 @@ where
         }
         Output::None => StatusCode::ACCEPTED.into_response(),
         Output::ProtocolError(e) => {
+            state.storage.remove(session_id).await;
             (StatusCode::BAD_REQUEST, format!("protocol error: {e}")).into_response()
         }
     }
@@ -504,290 +504,248 @@ where
 
 #[cfg(test)]
 mod tests {
-    use axum::{
-        body::Body,
-        http::{Request, StatusCode},
+    //! Exercises HTTP session lifecycle and deterministic storage eviction.
+
+    use std::{
+        convert::Infallible,
+        time::{Duration, Instant},
     };
+
+    use axum::{
+        Router,
+        body::{Body, to_bytes},
+        http::{Request, StatusCode},
+        response::Response,
+    };
+    use schemars::JsonSchema;
+    use serde::Deserialize;
+    use serde_json::{Value, json};
     use tower::util::ServiceExt;
 
-    use super::{HTTP_SESSION_ID_HEADER, mcp_router};
-    use crate::{McpServer, McpServerBuilder, NoTools};
+    use super::{
+        HTTP_SESSION_ID_HEADER, InMemoryStorage, InMemoryStorageError, McpSessionId,
+        SessionStorage, mcp_router,
+    };
+    use crate::{McpServer, NoTools, ToolDef, parse_line};
 
-    fn test_builder() -> McpServerBuilder<NoTools> {
-        let mut builder = McpServer::builder();
-        builder.name("test").version("1.0");
-        builder
+    /// Starts an MCP session.
+    const INITIALIZE: &str = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
+    /// Completes the initialization handshake.
+    const INITIALIZED: &str = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
+    /// Checks an existing session.
+    const PING: &str = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
+
+    /// Supplies text to a session-aware handler.
+    #[derive(Deserialize, JsonSchema)]
+    struct Echo {
+        /// Text to echo.
+        value: String,
     }
 
-    fn test_handler(_: NoTools) -> Result<String, std::convert::Infallible> {
-        unreachable!("no tools")
+    impl ToolDef for Echo {
+        const NAME: &'static str = "echo";
+        const DESCRIPTION: &'static str = "Echoes text";
     }
 
-    #[tokio::test]
-    async fn initialize_creates_session() {
-        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
-
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
-        assert!(response.headers().contains_key(HTTP_SESSION_ID_HEADER));
-
-        let session_id = response
-            .headers()
-            .get(HTTP_SESSION_ID_HEADER)
-            .unwrap()
-            .to_str()
-            .unwrap();
-        assert!(!session_id.is_empty());
+    /// Creates a router whose result identifies the handler's session.
+    fn test_router() -> Router {
+        mcp_router(
+            McpServer::builder(),
+            |session: Option<McpSessionId>, input: Echo| async move {
+                Ok::<_, Infallible>(format!(
+                    "{}: {}",
+                    session.expect("HTTP session"),
+                    input.value
+                ))
+            },
+        )
     }
 
-    #[tokio::test]
-    async fn subsequent_request_requires_session() {
-        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
-
-        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
-
-        let init_response = router
+    /// Sends one HTTP request with an optional session header.
+    async fn request(
+        router: &Router,
+        method: &str,
+        session: Option<&str>,
+        body: &'static str,
+    ) -> Response {
+        let mut request = Request::builder()
+            .method(method)
+            .uri("/")
+            .header("content-type", "application/json");
+        if let Some(session) = session {
+            request = request.header(HTTP_SESSION_ID_HEADER, session);
+        }
+        router
             .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .body(Body::from(init_body))
-                    .unwrap(),
-            )
+            .oneshot(request.body(Body::from(body)).expect("valid request"))
             .await
-            .unwrap();
-
-        let session_id = init_response
-            .headers()
-            .get(HTTP_SESSION_ID_HEADER)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-
-        let initialized_body = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
-
-        let response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .header(HTTP_SESSION_ID_HEADER, &session_id)
-                    .body(Body::from(initialized_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::ACCEPTED);
-
-        let ping_body = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .header(HTTP_SESSION_ID_HEADER, &session_id)
-                    .body(Body::from(ping_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::OK);
+            .expect("router response")
     }
 
+    /// Dispatches with the assigned session and removes it on deletion or protocol failure.
     #[tokio::test]
-    async fn invalid_session_returns_404() {
-        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
+    async fn session_dispatch_and_cleanup() {
+        for (method, body, status) in [
+            ("DELETE", "", StatusCode::NO_CONTENT),
+            (
+                "POST",
+                r#"{"jsonrpc":"2.0","id":99,"result":{}}"#,
+                StatusCode::BAD_REQUEST,
+            ),
+        ] {
+            let router = test_router();
+            let response = request(&router, "POST", None, INITIALIZE).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            let session = response
+                .headers()
+                .get(HTTP_SESSION_ID_HEADER)
+                .expect("assigned session")
+                .to_str()
+                .expect("ASCII session")
+                .to_string();
+            let _: McpSessionId = session.parse().expect("valid session identifier");
 
-        let body = r#"{"jsonrpc":"2.0","id":1,"method":"ping"}"#;
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .header(HTTP_SESSION_ID_HEADER, "00000000000000000000000000000000")
-                    .body(Body::from(body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn delete_removes_session() {
-        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
-
-        let init_body = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
-
-        let init_response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .body(Body::from(init_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        let session_id = init_response
-            .headers()
-            .get(HTTP_SESSION_ID_HEADER)
-            .unwrap()
-            .to_str()
-            .unwrap()
-            .to_string();
-
-        let delete_response = router
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method("DELETE")
-                    .uri("/")
-                    .header(HTTP_SESSION_ID_HEADER, &session_id)
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(delete_response.status(), StatusCode::NO_CONTENT);
-
-        let ping_body = r#"{"jsonrpc":"2.0","id":2,"method":"ping"}"#;
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("POST")
-                    .uri("/")
-                    .header("content-type", "application/json")
-                    .header(HTTP_SESSION_ID_HEADER, &session_id)
-                    .body(Body::from(ping_body))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn get_returns_405() {
-        let router = mcp_router(test_builder(), |_, t| async { test_handler(t) });
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .method("GET")
-                    .uri("/")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
-    }
-
-    mod storage {
-        use std::time::Duration;
-
-        use super::*;
-        use crate::io::{
-            McpSessionId,
-            axum::{InMemoryStorage, InMemoryStorageError, SessionStorage},
-        };
-
-        #[tokio::test]
-        async fn create_and_access_session() {
-            let storage = InMemoryStorage::new(10, Duration::from_secs(0));
-            let server = test_builder().build();
-
-            let id = storage.create(server).await.unwrap();
-
-            let result = storage
-                .with_session(id, |_server| "accessed")
+            let response = request(&router, "POST", Some(&session), INITIALIZED).await;
+            assert_eq!(response.status(), StatusCode::ACCEPTED);
+            let call = r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo","arguments":{"value":"hello"}}}"#;
+            let response = request(&router, "POST", Some(&session), call).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[HTTP_SESSION_ID_HEADER], session);
+            let body_bytes = to_bytes(response.into_body(), usize::MAX)
                 .await
-                .unwrap();
-            assert_eq!(result, Some("accessed"));
+                .expect("response body");
+            let result: Value = serde_json::from_slice(&body_bytes).expect("JSON response");
+            assert_eq!(
+                result,
+                json!({
+                    "jsonrpc": "2.0", "id": 3,
+                    "result": {"content": [{"type": "text", "text": format!("{session}: hello")}], "isError": false}
+                })
+            );
+
+            assert_eq!(
+                request(&router, method, Some(&session), body)
+                    .await
+                    .status(),
+                status
+            );
+            assert_eq!(
+                request(&router, "POST", Some(&session), PING)
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
+            assert_eq!(
+                request(&router, "DELETE", Some(&session), "")
+                    .await
+                    .status(),
+                StatusCode::NOT_FOUND
+            );
         }
+    }
 
-        #[tokio::test]
-        async fn missing_session_returns_none() {
-            let storage: InMemoryStorage<NoTools> =
-                InMemoryStorage::new(10, Duration::from_secs(0));
-            let fake_id = McpSessionId::from_raw(12345);
+    /// Rejects unsupported methods, invalid bodies, and missing or malformed session headers.
+    #[tokio::test]
+    async fn rejects_invalid_http_requests() {
+        let router = test_router();
+        for (method, session, body, status) in [
+            ("GET", None, "", StatusCode::METHOD_NOT_ALLOWED),
+            ("DELETE", None, "", StatusCode::BAD_REQUEST),
+            ("POST", None, "invalid JSON", StatusCode::BAD_REQUEST),
+            ("POST", Some("not-hex"), PING, StatusCode::BAD_REQUEST),
+            (
+                "POST",
+                Some("00000000000000000000000000000000"),
+                PING,
+                StatusCode::NOT_FOUND,
+            ),
+        ] {
+            assert_eq!(
+                request(&router, method, session, body).await.status(),
+                status
+            );
+        }
+    }
 
-            let result = storage
-                .with_session(fake_id, |_server| "accessed")
+    /// Retains server mutations and reports a removed session as absent.
+    #[tokio::test]
+    async fn storage_session_lifecycle() {
+        let storage = InMemoryStorage::new(1, Duration::ZERO);
+        let id = storage
+            .create(McpServer::<NoTools>::builder().build())
+            .await
+            .expect("new session");
+        storage
+            .with_session(id, |server| {
+                let _ = server.handle(parse_line(INITIALIZE).expect("initialize request"));
+                let _ = server.handle(parse_line(INITIALIZED).expect("initialized notification"));
+            })
+            .await
+            .expect("access session");
+        assert_eq!(
+            storage
+                .with_session(id, |server| server.is_ready())
                 .await
-                .unwrap();
-            assert_eq!(result, None);
+                .expect("read state"),
+            Some(true)
+        );
+        assert!(storage.remove(id).await);
+        assert!(!storage.remove(id).await);
+        assert_eq!(
+            storage
+                .with_session(id, |_| ())
+                .await
+                .expect("missing session"),
+            None
+        );
+    }
+
+    /// Protects recent sessions and evicts by last access rather than creation order.
+    #[tokio::test]
+    async fn storage_capacity_and_lru_eviction() {
+        let storage = InMemoryStorage::new(2, Duration::from_secs(60));
+        let first = storage
+            .create(McpServer::<NoTools>::builder().build())
+            .await
+            .expect("first session");
+        let second = storage
+            .create(McpServer::builder().build())
+            .await
+            .expect("second session");
+        assert!(matches!(
+            storage.create(McpServer::builder().build()).await,
+            Err(InMemoryStorageError::AtCapacity)
+        ));
+
+        {
+            let mut sessions = storage.sessions.write().expect("session lock");
+            let stale = Instant::now() - Duration::from_secs(120);
+            sessions.get_mut(&first).expect("first entry").last_accessed =
+                stale - Duration::from_secs(1);
+            sessions
+                .get_mut(&second)
+                .expect("second entry")
+                .last_accessed = stale;
         }
-
-        #[tokio::test]
-        async fn remove_session() {
-            let storage = InMemoryStorage::new(10, Duration::from_secs(0));
-            let server = test_builder().build();
-
-            let id = storage.create(server).await.unwrap();
-            assert!(storage.remove(id).await);
-            assert!(!storage.remove(id).await);
-        }
-
-        #[tokio::test]
-        async fn evicts_oldest_when_at_capacity() {
-            let storage = InMemoryStorage::new(2, Duration::from_secs(0));
-
-            let id1 = storage.create(test_builder().build()).await.unwrap();
-            let id2 = storage.create(test_builder().build()).await.unwrap();
-            let id3 = storage.create(test_builder().build()).await.unwrap();
-
-            let r1 = storage.with_session(id1, |_| ()).await.unwrap();
-            let r2 = storage.with_session(id2, |_| ()).await.unwrap();
-            let r3 = storage.with_session(id3, |_| ()).await.unwrap();
-
-            assert!(r1.is_none(), "oldest session should be evicted");
-            assert!(r2.is_some());
-            assert!(r3.is_some());
-        }
-
-        #[tokio::test]
-        async fn at_capacity_when_sessions_too_young() {
-            let storage = InMemoryStorage::new(2, Duration::from_secs(60));
-
-            storage.create(test_builder().build()).await.unwrap();
-            storage.create(test_builder().build()).await.unwrap();
-
-            let result = storage.create(test_builder().build()).await;
-            assert!(matches!(result, Err(InMemoryStorageError::AtCapacity)));
+        assert_eq!(
+            storage
+                .with_session(first, |_| ())
+                .await
+                .expect("refresh first session"),
+            Some(())
+        );
+        let third = storage
+            .create(McpServer::builder().build())
+            .await
+            .expect("evict stale session");
+        for (id, expected) in [(first, Some(())), (second, None), (third, Some(()))] {
+            assert_eq!(
+                storage
+                    .with_session(id, |_| ())
+                    .await
+                    .expect("session lookup"),
+                expected
+            );
         }
     }
 }
