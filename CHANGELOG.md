@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `CliBuilder::about()` and `instructions()` methods for application-specific help, with full instructions shown only in `--help`.
+
+### Changed
+
+- Remove the generic MCP introduction from CLI help. Keep `-h` compact, with image and artifact controls, output defaults, and accepted values documented in `--help`.
+
 ### Fixed
 
 - Preserve root-level `additionalProperties` in advertised MCP tool input schemas, retaining unknown-field restrictions and map value schemas.
