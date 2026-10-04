@@ -32,15 +32,23 @@ mercutio::tool_registry! {
 ## Native CLI
 
 Enable the `cli` feature to expose the same registry and handler as a native command-line
-application. The generated command uses conventional kebab-case spellings while retaining the
-original MCP names internally:
+application. Commands invoke the handler locally, without starting or connecting to an MCP server.
+The generated command uses conventional kebab-case spellings while retaining the original tool
+names internally:
 
 ```rust,ignore
 use std::convert::Infallible;
 use mercutio::cli::ToolRegistryExt as _;
 
+/// Guides callers using weather queries and reminders.
+const INSTRUCTIONS: &str = "Specify a city for weather queries. Reminder times must include a UTC offset.";
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let cli = MyTools::cli("my-tools").version("1.0.0").build()?;
+    let cli = MyTools::cli("my-tools")
+        .about("Check the weather and set reminders")
+        .instructions(INSTRUCTIONS)
+        .version("1.0.0")
+        .build()?;
     cli.run(|_session_id, tool| -> Result<String, Infallible> {
         Ok(match tool {
             MyTools::GetWeather(input) => format!("Weather in {}: sunny", input.city),
@@ -54,30 +62,55 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 The registry above produces a complete standalone CLI:
 
 ```console
-$ my-tools --help
-Invokes local MCP tool handlers as native commands
+$ my-tools -h
+Check the weather and set reminders
 
 Usage: my-tools [OPTIONS] [COMMAND]
 
 Commands:
-  get-weather  Gets current weather for a city
-  set-reminder Sets a reminder
+  get-weather   Gets current weather for a city
+  set-reminder  Sets a reminder
 
 Options:
-      --output <MODE>       [default: artifacts] [possible values: artifacts, structured, raw, binary]
-      --images <MODE>       [default: auto] [possible values: auto, kitty, off]
-      --artifact-dir <DIR>  Parent directory for artifact output
-      --input-json <TOOL>   Reads the selected tool's JSON object from stdin
-  -h, --help                Print help
-  -V, --version             Print version
+      --input-json <COMMAND>  Read arguments from stdin as JSON
+  -h, --help                  Print help (see more with '--help')
+  -V, --version               Print version
 
-$ my-tools get-weather --help
+Output options (before the command):
+      --output <MODE>  Choose output format
+
+Use --help for the full reference.
+
+$ my-tools get-weather -h
+Gets current weather for a city
+
 Usage: my-tools get-weather --city <STRING>
 
 Options:
       --city <STRING>  City name, e.g. "Llanfairpwllgwyngyllgogerychwyrndrobwllllantysiliogogogoch".
-  -h, --help           Print help
+  -h, --help           Print help (see more with '--help')
 ```
+
+Both `.about(...)` and `.instructions(...)` are optional and recommended. Without them,
+help starts with usage, commands, and options rather than a generic description. `-h`
+is the compact command index; `--help` shows the summary and complete instructions first,
+followed by usage, commands, and all options. Output defaults, accepted modes, `--images`,
+and `--artifact-dir` are documented in long help. Command-specific help does not repeat
+application instructions.
+
+Reuse the same `INSTRUCTIONS` value for MCP initialization:
+
+```rust,ignore
+let server = mercutio::McpServer::<MyTools>::builder()
+    .name("my-tools-mcp")
+    .version("1.0.0")
+    .instructions(INSTRUCTIONS)
+    .build();
+```
+
+For longer references, define `INSTRUCTIONS` with `include_str!("instructions.md")` and
+pass it to both builders. The document stays single-sourced; the CLI does not depend on
+a server instance.
 
 Schema properties become named options. Required options are enforced, string enums become exact
 possible values, booleans accept `--recursive`, `--recursive=true`, and `--recursive=false`, and
@@ -145,7 +178,11 @@ errors:
 ```rust,ignore
 use mercutio::cli::ToolRegistryExt as _;
 
-let tools = MyTools::cli("tool").version("1.0.0").build()?;
+let tools = MyTools::cli("tool")
+    .about("Check the weather and set reminders")
+    .instructions(INSTRUCTIONS)
+    .version("1.0.0")
+    .build()?;
 let command = tools.attach_to(
     clap::Command::new("my-app")
         .subcommand(clap::Command::new("mcp"))
