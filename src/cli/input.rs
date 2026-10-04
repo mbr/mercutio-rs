@@ -3,7 +3,6 @@
 use std::{io::Read, path::PathBuf};
 
 use clap::ArgMatches;
-use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use super::{
@@ -81,26 +80,23 @@ impl ValueSpec {
         matches: &ArgMatches,
         parent_active: bool,
     ) -> Result<Option<Value>, String> {
-        let values = matches
-            .get_many::<String>(&self.cli_name)
-            .map(|values| values.map(String::as_str).collect::<Vec<_>>());
-        let Some(values) = values else {
+        let Some(values) = matches.get_many::<String>(&self.cli_name) else {
             if self.required && parent_active {
                 return Err(format!("missing required option `--{}`", self.cli_name));
             }
             return Ok(None);
         };
 
+        let first = values.clone().next().expect("supplied option has a value");
         match &self.kind {
-            ValueKind::Scalar(kind) => parse_scalar(kind, values[0], &self.cli_name).map(Some),
+            ValueKind::Scalar(kind) => parse_scalar(kind, first, &self.cli_name).map(Some),
             ValueKind::Array(kind) => values
-                .into_iter()
                 .map(|value| parse_scalar(kind, value, &self.cli_name))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Value::Array)
                 .map(Some),
             ValueKind::Json(expected) => {
-                let value: Value = serde_json::from_str(values[0])
+                let value: Value = serde_json::from_str(first)
                     .map_err(|error| format!("invalid JSON for `--{}`: {error}", self.cli_name))?;
                 if let Some(expected) = expected
                     && !json_has_type(&value, expected)
@@ -194,8 +190,7 @@ pub(super) fn parse_output_options(matches: &ArgMatches) -> Result<OutputOptions
 
 /// Reads exactly one whole-input JSON object.
 pub(super) fn read_json_input(input: &mut impl Read) -> Result<Value, CliError> {
-    let mut deserializer = serde_json::Deserializer::from_reader(input);
-    let value = Value::deserialize(&mut deserializer).map_err(|error| {
+    let value: Value = serde_json::from_reader(input).map_err(|error| {
         if error.is_io() {
             CliError::runtime(format!("failed to read JSON input: {error}"))
         } else {
@@ -204,10 +199,6 @@ pub(super) fn read_json_input(input: &mut impl Read) -> Result<Value, CliError> 
                 message: format!("error: invalid JSON input: {error}\n"),
             }
         }
-    })?;
-    deserializer.end().map_err(|error| CliError {
-        kind: CliErrorKind::Usage,
-        message: format!("error: trailing JSON input: {error}\n"),
     })?;
     if !value.is_object() {
         return Err(CliError {
@@ -227,19 +218,16 @@ fn parse_scalar(kind: &ScalarKind, input: &str, cli_name: &str) -> Result<Value,
             "false" => Ok(Value::Bool(false)),
             _ => Err(format!("invalid boolean for `--{cli_name}`")),
         },
-        ScalarKind::Integer => {
+        ScalarKind::Integer | ScalarKind::Number => {
+            let expected = if matches!(kind, ScalarKind::Integer) {
+                "integer"
+            } else {
+                "number"
+            };
             let value: Value = serde_json::from_str(input)
-                .map_err(|error| format!("invalid integer for `--{cli_name}`: {error}"))?;
-            if value.as_i64().is_none() && value.as_u64().is_none() {
-                return Err(format!("invalid integer for `--{cli_name}`"));
-            }
-            Ok(value)
-        }
-        ScalarKind::Number => {
-            let value: Value = serde_json::from_str(input)
-                .map_err(|error| format!("invalid number for `--{cli_name}`: {error}"))?;
-            if !value.is_number() {
-                return Err(format!("invalid number for `--{cli_name}`"));
+                .map_err(|error| format!("invalid {expected} for `--{cli_name}`: {error}"))?;
+            if !json_has_type(&value, expected) {
+                return Err(format!("invalid {expected} for `--{cli_name}`"));
             }
             Ok(value)
         }
@@ -257,5 +245,33 @@ fn json_has_type(value: &Value, expected: &str) -> bool {
         "object" => value.is_object(),
         "string" => value.is_string(),
         _ => true,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    //! Exercises reader failures at JSON document boundaries.
+
+    use std::io::{self, Read};
+
+    use super::read_json_input;
+
+    /// Reports an I/O failure instead of EOF.
+    struct FailingReader;
+
+    impl Read for FailingReader {
+        fn read(&mut self, _buffer: &mut [u8]) -> io::Result<usize> {
+            Err(io::Error::other("injected read failure"))
+        }
+    }
+
+    /// Keeps stream failures distinct from usage errors, including after a complete value.
+    #[test]
+    fn read_failures_are_runtime_errors() {
+        for prefix in [b"".as_slice(), b"{", b"{}"] {
+            let error = read_json_input(&mut prefix.chain(FailingReader))
+                .expect_err("reader fails before EOF");
+            assert_eq!(error.exit_code(), 1);
+        }
     }
 }
