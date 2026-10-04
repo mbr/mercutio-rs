@@ -1,15 +1,11 @@
 ---
 source: tests/cli.rs
-expression: notes.trim()
+expression: "help[start..].trim_end()"
 ---
-`required_choice`: use either `--required-choice` or its object options (`--required-choice-label`, `--required-choice-count`). Do not combine the two forms. One form is required.
-
-`optional_choice`: use either `--optional-choice` or its object options (`--optional-choice-label`, `--optional-choice-count`). Do not combine the two forms. Both forms may be omitted.
-
-`settings.outer_choice`: use either `--settings-outer-choice` or its object options (`--settings-outer-choice-choice`, `--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`). Do not combine the two forms. One form is required when `settings` is activated.
-
-`settings.outer_choice.choice`: use either `--settings-outer-choice-choice` or its object options (`--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`). Do not combine the two forms. One form is required when the object form of `settings.outer_choice` is selected.
-
-`settings.required_group.choice`: use either `--settings-required-group-choice` or its object options (`--settings-required-group-choice-label`, `--settings-required-group-choice-count`). Do not combine the two forms. One form is required when `settings` is activated.
-
-`settings.optional_group.choice`: use either `--settings-optional-group-choice` or its object options (`--settings-optional-group-choice-label`, `--settings-optional-group-choice-count`). Do not combine the two forms. One form is required when `settings.optional_group` is activated.
+Alternatives (do not combine forms):
+  `required_choice`: `--required-choice` OR object options (`--required-choice-label`, `--required-choice-count`); required
+  `optional_choice`: `--optional-choice` OR object options (`--optional-choice-label`, `--optional-choice-count`); optional
+  `settings.outer_choice`: `--settings-outer-choice` OR object options (`--settings-outer-choice-choice`, `--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`); required when `settings` is activated
+  `settings.outer_choice.choice`: `--settings-outer-choice-choice` OR object options (`--settings-outer-choice-choice-label`, `--settings-outer-choice-choice-count`); required when the object form of `settings.outer_choice` is selected
+  `settings.required_group.choice`: `--settings-required-group-choice` OR object options (`--settings-required-group-choice-label`, `--settings-required-group-choice-count`); required when `settings` is activated
+  `settings.optional_group.choice`: `--settings-optional-group-choice` OR object options (`--settings-optional-group-choice-label`, `--settings-optional-group-choice-count`); required when `settings.optional_group` is activated

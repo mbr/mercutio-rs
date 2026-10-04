@@ -107,7 +107,10 @@ fn tool_command(tool: &ToolSpec) -> Command {
     let mut notes = Vec::new();
     collect_union_help(root, None, &mut notes);
     if !notes.is_empty() {
-        command = command.after_long_help(format!("Input alternatives:\n\n{}", notes.join("\n\n")));
+        command = command.after_long_help(format!(
+            "Alternatives (do not combine forms):\n{}",
+            notes.join("\n")
+        ));
     }
     command
 }
@@ -130,13 +133,12 @@ fn collect_union_help(object: &ObjectSpec, required_when: Option<&str>, notes: &
                     .collect::<Vec<_>>()
                     .join(", ");
                 let selection = match (union.required, required_when) {
-                    (false, _) => "Both forms may be omitted.".into(),
-                    (true, None) => "One form is required.".into(),
-                    (true, Some(condition)) => format!("One form is required when {condition}."),
+                    (false, _) => "optional".into(),
+                    (true, None) => "required".into(),
+                    (true, Some(condition)) => format!("required when {condition}"),
                 };
                 notes.push(format!(
-                    "`{}`: use either `--{}` or its object options ({options}). \
-                     Do not combine the two forms. {selection}",
+                    "  `{}`: `--{}` OR object options ({options}); {selection}",
                     union.scalar.path, union.scalar.cli_name,
                 ));
                 let condition = format!("the object form of `{}` is selected", union.scalar.path);

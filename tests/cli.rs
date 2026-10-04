@@ -466,17 +466,19 @@ fn union_help_describes_exclusivity_and_conditional_selection() {
             .try_get_matches_from(args)
             .expect_err("help request")
             .to_string();
-        assert!(!help.contains("Input alternatives:"), "{help}");
-        assert!(!help.contains("Do not combine the two forms."), "{help}");
+        assert!(
+            !help.contains("Alternatives (do not combine forms):"),
+            "{help}"
+        );
     }
     let help = command
         .try_get_matches_from(["app", "chooser", "choose", "--help"])
         .expect_err("long help request")
         .to_string();
-    let (_, notes) = help
-        .split_once("Input alternatives:\n\n")
+    let start = help
+        .find("Alternatives (do not combine forms):")
         .expect("union selection notes");
-    insta::assert_snapshot!(notes.trim());
+    insta::assert_snapshot!(help[start..].trim_end());
 }
 
 #[test]
