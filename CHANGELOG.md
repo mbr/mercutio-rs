@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Cli::run_or_exit()` and `run_async_or_exit()` convenience runners that print help or errors and exit with the appropriate status, returning normally on success.
 - Optional `CliBuilder::about()` and `instructions()` methods for application-specific help, with full instructions shown only in `--help`.
 
 ### Changed

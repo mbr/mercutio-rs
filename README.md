@@ -41,8 +41,10 @@ let cli = MyTools::cli("my-tools")
     .instructions(INSTRUCTIONS)
     .build()?;
 
-let result = cli.run_async(&mut handler).await;
+cli.run_async_or_exit(&mut handler).await;
 ```
+
+This handles help, diagnostics, and exit codes. Use `run_or_exit()` for synchronous handlers.
 
 ```console
 my-tools get-weather --city Berlin
@@ -60,9 +62,8 @@ reference and output controls.
 
 For a multi-interface application, `attach_to()` nests the generated commands below an
 application-owned Clap command. Parse-only APIs let you handle dispatch and rendering yourself.
-See the [`cli` API](https://docs.rs/mercutio/latest/mercutio/cli/) for composition and runners.
-Runners return [`CliError`](https://docs.rs/mercutio/latest/mercutio/cli/struct.CliError.html),
-including help requests; use its `write_to()` and `exit_code()` at the process boundary.
+See the [`cli` API](https://docs.rs/mercutio/latest/mercutio/cli/) for composition and the
+non-exiting `run()` and `run_async()` variants.
 
 ## Sans-IO Usage
 
