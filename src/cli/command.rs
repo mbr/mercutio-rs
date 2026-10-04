@@ -104,7 +104,47 @@ fn tool_command(tool: &ToolSpec) -> Command {
     for value in values {
         command = command.arg(value_arg(value));
     }
+    let mut notes = Vec::new();
+    collect_union_help(root, None, &mut notes);
+    if !notes.is_empty() {
+        command = command.after_long_help(format!("Input alternatives:\n\n{}", notes.join("\n\n")));
+    }
     command
+}
+
+/// Collects union selection rules with their enclosing activation conditions.
+fn collect_union_help(object: &ObjectSpec, required_when: Option<&str>, notes: &mut Vec<String>) {
+    for child in &object.children {
+        match child {
+            NodeSpec::Object(object) => {
+                let condition =
+                    (!object.required).then(|| format!("`{}` is activated", object.path));
+                collect_union_help(object, condition.as_deref().or(required_when), notes);
+            }
+            NodeSpec::Union(union) => {
+                let mut values = Vec::new();
+                collect_values(&union.object, &mut values);
+                let options = values
+                    .iter()
+                    .map(|value| format!("`--{}`", value.cli_name))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let selection = match (union.required, required_when) {
+                    (false, _) => "Both forms may be omitted.".into(),
+                    (true, None) => "One form is required.".into(),
+                    (true, Some(condition)) => format!("One form is required when {condition}."),
+                };
+                notes.push(format!(
+                    "`{}`: use either `--{}` or its object options ({options}). \
+                     Do not combine the two forms. {selection}",
+                    union.scalar.path, union.scalar.cli_name,
+                ));
+                let condition = format!("the object form of `{}` is selected", union.scalar.path);
+                collect_union_help(&union.object, Some(&condition), notes);
+            }
+            NodeSpec::Value(_) => {}
+        }
+    }
 }
 
 /// Collects flattened options from an object tree.

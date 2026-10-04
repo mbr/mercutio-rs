@@ -404,6 +404,81 @@ impl ToolDef for UnionInput {
     const DESCRIPTION: &'static str = "Chooses one representation";
 }
 
+/// Supplies nested union schemas without constraining their test payloads.
+#[derive(Deserialize)]
+struct UnionHelpInput {
+    /// Retains arbitrary input properties.
+    #[serde(flatten)]
+    _arguments: BTreeMap<String, serde_json::Value>,
+}
+
+impl JsonSchema for UnionHelpInput {
+    fn schema_name() -> Cow<'static, str> {
+        "UnionHelpInput".into()
+    }
+
+    fn json_schema(generator: &mut SchemaGenerator) -> Schema {
+        let input = UnionInput::json_schema(generator).to_value();
+        let choice = &input["properties"]["choice"];
+        json_schema!({
+            "type": "object",
+            "properties": {
+                "required_choice": choice,
+                "optional_choice": choice,
+                "settings": {
+                    "type": "object",
+                    "properties": {
+                        "required_group": input,
+                        "optional_group": input,
+                        "outer_choice": { "oneOf": [{ "type": "string" }, input] }
+                    },
+                    "required": ["required_group", "outer_choice"]
+                }
+            },
+            "required": ["required_choice"]
+        })
+    }
+}
+
+impl ToolDef for UnionHelpInput {
+    const NAME: &'static str = "choose";
+    const DESCRIPTION: &'static str = "Chooses nested representations";
+}
+
+/// Explains each union only in long tool help, with precise activation conditions.
+#[test]
+fn union_help_describes_exclusivity_and_conditional_selection() {
+    let command = UnionHelpInput::cli("chooser")
+        .build()
+        .expect("valid CLI")
+        .attach_to(
+            clap::Command::new("app")
+                .color(clap::ColorChoice::Never)
+                .term_width(0),
+        )
+        .expect("nested CLI");
+    for args in [
+        vec!["app", "chooser", "--help"],
+        vec!["app", "chooser", "choose", "-h"],
+    ] {
+        let help = command
+            .clone()
+            .try_get_matches_from(args)
+            .expect_err("help request")
+            .to_string();
+        assert!(!help.contains("Input alternatives:"), "{help}");
+        assert!(!help.contains("Do not combine the two forms."), "{help}");
+    }
+    let help = command
+        .try_get_matches_from(["app", "chooser", "choose", "--help"])
+        .expect_err("long help request")
+        .to_string();
+    let (_, notes) = help
+        .split_once("Input alternatives:\n\n")
+        .expect("union selection notes");
+    insta::assert_snapshot!(notes.trim());
+}
+
 #[test]
 fn parses_and_separates_supported_union_branches() {
     let cli = UnionInput::cli("chooser").build().expect("valid CLI");

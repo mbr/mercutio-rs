@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Explain scalar-versus-object union exclusivity and required, optional, or conditional branch selection in CLI tool `--help`.
+
 ## [0.9.0-alpha.2] - 2026-10-04
 
 ### Added
