@@ -146,51 +146,44 @@ impl fmt::Display for Rfc3339 {
 
 #[cfg(test)]
 mod tests {
-    use super::{Rfc3339, backend};
+    //! Checks timestamp preservation across formatting and serialization.
 
-    #[test]
-    fn deserialize_valid_timestamps() {
-        let _utc: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid UTC");
-        let _offset: Rfc3339 =
-            serde_json::from_str(r#""2024-03-11T12:00:00+02:00""#).expect("valid offset");
-    }
+    use super::Rfc3339;
 
+    /// Preserves the timestamp across both textual representations.
     #[test]
-    fn display_outputs_valid_rfc3339() {
+    fn display_and_json_roundtrip() {
         let cases = [
             r#""2024-03-11T10:00:00Z""#,
             r#""2024-03-11T12:00:00+02:00""#,
             r#""2024-12-31T23:59:59-05:00""#,
             r#""2000-01-01T00:00:00+00:00""#,
+            r#""2024-03-11T10:00:00.123456789Z""#,
         ];
         for input in cases {
             let ts: Rfc3339 = serde_json::from_str(input).expect("valid input");
-            let displayed = ts.to_string();
-            backend::parse(&displayed).unwrap_or_else(|e| {
-                panic!(
-                    "Display output '{}' is not valid RFC 3339: {}",
-                    displayed, e
-                )
-            });
+            let displayed: Rfc3339 =
+                serde_json::from_value(serde_json::Value::String(ts.to_string()))
+                    .expect("displayed timestamp");
+            assert_eq!(displayed, ts);
+
+            let serialized = serde_json::to_string(&ts).expect("serialized timestamp");
+            let reparsed: Rfc3339 = serde_json::from_str(&serialized).expect("JSON roundtrip");
+            assert_eq!(reparsed, ts);
         }
     }
 
+    /// Gives invalid inputs a timestamp example for self-correction.
     #[test]
     fn error_message_format() {
-        let err = serde_json::from_str::<Rfc3339>(r#""2025-05-25 14:30:00""#).unwrap_err();
+        let err = serde_json::from_str::<Rfc3339>(r#""2025-05-25 14:30:00""#)
+            .expect_err("timestamp lacks a timezone");
         let msg = err.to_string();
         assert!(msg.contains("invalid RFC 3339 timestamp '2025-05-25 14:30:00'"));
         assert!(msg.contains("Example: current time is"));
     }
 
-    #[test]
-    fn roundtrip() {
-        let ts: Rfc3339 = serde_json::from_str(r#""2024-03-11T10:00:00Z""#).expect("valid");
-        let serialized = serde_json::to_string(&ts).expect("serializes");
-        let reparsed: Rfc3339 = serde_json::from_str(&serialized).expect("valid");
-        assert_eq!(reparsed, ts);
-    }
-
+    /// Advertises the timestamp format in generated schemas.
     #[test]
     fn json_schema() {
         let schema = schemars::schema_for!(Rfc3339);
