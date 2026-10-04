@@ -99,12 +99,6 @@ my-tools search --filter 'recent items'
 my-tools search --filter-tags rust --filter-range-min 1
 ```
 
-References, unsupported unions, and bare nested object schemas use a JSON-valued option while
-supported siblings retain typed options. Root schemas declaring dynamic properties use only
-`--input-json`. A bare root `{"type":"object"}` also keeps a zero-argument command that supplies
-`{}`, because Schemars uses that schema for empty input structs; arbitrary properties can still be
-supplied through `--input-json`. `ToolRegistry::parse()` remains authoritative for input validation.
-
 For stable scripting and schemas that cannot be represented completely as options, select the
 original tool by its normalized name and pipe exactly one JSON object through stdin:
 
