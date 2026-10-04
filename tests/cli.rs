@@ -818,6 +818,39 @@ fn binary_output_separates_bytes_and_text() {
     assert!(stderr.is_empty());
 }
 
+/// Rejects ambiguous binary output before writing payloads or accompanying text.
+#[test]
+fn binary_output_rejects_zero_or_multiple_blocks_without_writing() {
+    for (count, output) in [
+        (0, ToolOutput::new().text("no binary payload")),
+        (
+            2,
+            ToolOutput::new()
+                .text("multiple binary payloads")
+                .image(b"png", "image/png")
+                .audio(b"wav", "audio/wav"),
+        ),
+    ] {
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let error = cli()
+            .run_on(
+                minimal_search_args("binary"),
+                Cursor::new(Vec::new()),
+                &mut stdout,
+                &mut stderr,
+                |_, _| -> Result<ToolOutput, &str> { Ok(output) },
+            )
+            .expect_err("binary output requires exactly one block");
+        assert_eq!(error.exit_code(), 1);
+        assert!(error.to_string().contains(&format!(
+            "binary output requires exactly one binary content block, found {count}"
+        )));
+        assert!(stdout.is_empty());
+        assert!(stderr.is_empty());
+    }
+}
+
 #[test]
 fn artifact_output_creates_private_unique_files_and_forced_kitty() {
     let parent = tempfile::tempdir().expect("temporary artifact parent");
@@ -903,6 +936,55 @@ fn artifact_output_creates_private_unique_files_and_forced_kitty() {
                 & 0o777,
             0o600
         );
+    }
+}
+
+/// Creates artifact parents without changing cwd or emitting automatic graphics.
+#[test]
+fn artifact_output_resolves_new_parents_without_inline_images() {
+    let current = std::env::current_dir().expect("current directory");
+    let sandbox = tempfile::tempdir_in(&current).expect("temporary artifact sandbox");
+    let relative = sandbox
+        .path()
+        .strip_prefix(&current)
+        .expect("sandbox is beneath current directory")
+        .join("relative/nested");
+    assert!(relative.is_relative());
+
+    for parent in [relative, sandbox.path().join("absolute/nested")] {
+        let absolute_parent = current.join(&parent);
+        assert!(!absolute_parent.exists());
+        let mut args = minimal_search_args("artifacts");
+        args.splice(
+            1..1,
+            ["--artifact-dir", parent.to_str().expect("UTF-8 path")],
+        );
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        cli()
+            .run_on(
+                args,
+                Cursor::new(Vec::new()),
+                &mut stdout,
+                &mut stderr,
+                |_, _| -> Result<ToolOutput, &str> {
+                    Ok(ToolOutput::new().image(b"png", "image/png"))
+                },
+            )
+            .expect("artifact runner creates missing parents");
+        let directories = std::fs::read_dir(&absolute_parent)
+            .expect("created artifact parent")
+            .collect::<Result<Vec<_>, _>>()
+            .expect("directory entries");
+        assert_eq!(directories.len(), 1);
+        let image = directories[0].path().join("image-1.png");
+        assert!(image.is_absolute());
+        assert_eq!(std::fs::read(&image).expect("saved image"), b"png");
+        assert_eq!(
+            String::from_utf8(stdout).expect("text output"),
+            format!("[image: {} (image/png)]\n", image.display())
+        );
+        assert!(stderr.is_empty());
     }
 }
 
