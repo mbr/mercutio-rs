@@ -55,7 +55,7 @@ use std::{
 use base64::Engine;
 use rust_mcp_schema::{
     AudioContent, BlobResourceContents, CallToolResult, ContentBlock, EmbeddedResource,
-    ImageContent, ResourceLink, TextResourceContents, ToolInputSchema,
+    EmbeddedResourceResource, ImageContent, ResourceLink, TextResourceContents, ToolInputSchema,
 };
 use serde::Serialize;
 
@@ -161,29 +161,24 @@ impl ToolOutput {
     }
 
     /// Adds a text content block.
-    pub fn text<I: Into<String>>(mut self, text: I) -> Self {
-        self.content.push(ContentBlock::text_content(text.into()));
-        self
+    pub fn text<I: Into<String>>(self, text: I) -> Self {
+        self.content(ContentBlock::text_content(text.into()))
     }
 
     /// Adds an image content block.
     ///
     /// The image data is base64-encoded automatically.
-    pub fn image<S: Into<String>>(mut self, data: &[u8], mime_type: S) -> Self {
+    pub fn image<S: Into<String>>(self, data: &[u8], mime_type: S) -> Self {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-        self.content
-            .push(ImageContent::new(encoded, mime_type.into(), None, None).into());
-        self
+        self.content(ImageContent::new(encoded, mime_type.into(), None, None))
     }
 
     /// Adds an audio content block.
     ///
     /// The audio data is base64-encoded automatically.
-    pub fn audio<S: Into<String>>(mut self, data: &[u8], mime_type: S) -> Self {
+    pub fn audio<S: Into<String>>(self, data: &[u8], mime_type: S) -> Self {
         let encoded = base64::engine::general_purpose::STANDARD.encode(data);
-        self.content
-            .push(AudioContent::new(encoded, mime_type.into(), None, None).into());
-        self
+        self.content(AudioContent::new(encoded, mime_type.into(), None, None))
     }
 
     /// Adds an embedded blob resource.
@@ -191,7 +186,7 @@ impl ToolOutput {
     /// Use for binary content with URI metadata, such as PDFs or other documents. The data is
     /// base64-encoded automatically.
     pub fn embedded_blob<U: Into<String>, M: Into<String>>(
-        mut self,
+        self,
         data: &[u8],
         uri: U,
         mime_type: M,
@@ -203,9 +198,7 @@ impl ToolOutput {
             mime_type: Some(mime_type.into()),
             meta: None,
         };
-        self.content
-            .push(EmbeddedResource::new(blob.into(), None, None).into());
-        self
+        self.content(EmbeddedResource::new(blob.into(), None, None))
     }
 
     /// Adds an embedded text resource.
@@ -213,7 +206,7 @@ impl ToolOutput {
     /// Like [`text`](Self::text) but includes a URI, useful when the content represents a file
     /// or addressable resource.
     pub fn embedded_text<T: Into<String>, U: Into<String>, M: Into<String>>(
-        mut self,
+        self,
         text: T,
         uri: U,
         mime_type: Option<M>,
@@ -224,31 +217,25 @@ impl ToolOutput {
             mime_type: mime_type.map(Into::into),
             meta: None,
         };
-        self.content
-            .push(EmbeddedResource::new(text_resource.into(), None, None).into());
-        self
+        self.content(EmbeddedResource::new(text_resource.into(), None, None))
     }
 
     /// Adds a resource link.
     ///
     /// References an MCP resource by URI rather than embedding content inline. The client
     /// fetches it separately via `resources/read`.
-    pub fn resource_link<U: Into<String>, N: Into<String>>(mut self, uri: U, name: N) -> Self {
-        self.content.push(
-            ResourceLink::new(
-                Vec::new(),
-                name.into(),
-                uri.into(),
-                None,
-                None,
-                None,
-                None,
-                None,
-                None,
-            )
-            .into(),
-        );
-        self
+    pub fn resource_link<U: Into<String>, N: Into<String>>(self, uri: U, name: N) -> Self {
+        self.content(ResourceLink::new(
+            Vec::new(),
+            name.into(),
+            uri.into(),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ))
     }
 
     /// Adds a raw content block.
@@ -336,24 +323,21 @@ impl fmt::Display for ToolOutput {
                 ContentBlock::ResourceLink(link) => {
                     write!(f, "[Resource: {} ({})]", link.name, link.uri)?;
                 }
-                ContentBlock::EmbeddedResource(res) => {
-                    use rust_mcp_schema::EmbeddedResourceResource;
-                    match &res.resource {
-                        EmbeddedResourceResource::TextResourceContents(text) => {
-                            write!(f, "[Embedded Text: {}]", text.uri)?;
-                        }
-                        EmbeddedResourceResource::BlobResourceContents(blob) => {
-                            let mime = blob.mime_type.as_deref().unwrap_or("unknown");
-                            write!(
-                                f,
-                                "[Embedded Blob: {}, {}, {} bytes]",
-                                blob.uri,
-                                mime,
-                                blob.blob.len()
-                            )?;
-                        }
+                ContentBlock::EmbeddedResource(res) => match &res.resource {
+                    EmbeddedResourceResource::TextResourceContents(text) => {
+                        write!(f, "[Embedded Text: {}]", text.uri)?;
                     }
-                }
+                    EmbeddedResourceResource::BlobResourceContents(blob) => {
+                        let mime = blob.mime_type.as_deref().unwrap_or("unknown");
+                        write!(
+                            f,
+                            "[Embedded Blob: {}, {}, {} bytes]",
+                            blob.uri,
+                            mime,
+                            blob.blob.len()
+                        )?;
+                    }
+                },
             }
         }
 
@@ -974,13 +958,8 @@ macro_rules! tool_registry {
             ) -> std::result::Result<Self, $crate::JsonRpcError> {
                 match name {
                     $(
-                        $tool_name => {
-                            let input: $variant = $crate::serde_json::from_value(arguments)
-                                .map_err(|e| $crate::JsonRpcError::InvalidParams {
-                                    msg: format!("{}: {}", $tool_name, e),
-                                })?;
-                            Ok(Self::$variant(input))
-                        }
+                        $tool_name => <$variant as $crate::ToolRegistry>::parse(name, arguments)
+                            .map(Self::$variant),
                     )*
                     _ => Err($crate::JsonRpcError::MethodNotFound {
                         msg: format!("unknown tool: {name}"),
@@ -1001,144 +980,85 @@ macro_rules! tool_registry {
 
 #[cfg(test)]
 mod tests {
+    //! Exercises tool schemas, result representations, and error conversion.
+
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    use rust_mcp_schema::ContentBlock;
+    use serde_json::json;
+    use thiserror::Error;
+
     use super::{IntoToolResponse, NoTools, ToolDefinition, ToolOutput, ToolRegistry};
     use crate::JsonRpcError;
 
+    /// Rejects invocation when no tools are registered.
     #[test]
-    fn no_tools_definitions_empty() {
+    fn no_tools_cannot_dispatch() {
         assert!(NoTools::definitions().is_empty());
+        let error = NoTools::parse("anything", serde_json::Value::Null)
+            .expect_err("no tools are available");
+        assert!(matches!(error, JsonRpcError::MethodNotFound { .. }));
     }
 
+    /// Preserves text and error status for every supported response conversion.
     #[test]
-    fn no_tools_parse_returns_error() {
-        let result = NoTools::parse("anything", serde_json::Value::Null);
-        assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(matches!(err, JsonRpcError::MethodNotFound { .. }));
-    }
-
-    #[test]
-    fn tool_definition_from_tool() {
-        #[allow(dead_code)]
-        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
-        struct TestInput {
-            value: String,
+    fn text_response_conversions() {
+        for (result, text, is_error) in [
+            ("borrowed".into_tool_response(), "borrowed", false),
+            (String::from("owned").into_tool_response(), "owned", false),
+            (
+                ToolOutput::new().text("built").into_tool_response(),
+                "built",
+                false,
+            ),
+            (
+                Ok::<_, &str>("success").into_tool_response(),
+                "success",
+                false,
+            ),
+            (
+                Err::<ToolOutput, _>("failure").into_tool_response(),
+                "failure",
+                true,
+            ),
+        ] {
+            assert_eq!(
+                serde_json::to_value(result).expect("serialized response"),
+                json!({
+                    "content": [{"type": "text", "text": text}],
+                    "isError": is_error
+                })
+            );
         }
+    }
 
-        impl super::ToolDef for TestInput {
-            const NAME: &'static str = "test_tool";
-            const DESCRIPTION: &'static str = "A test tool";
+    /// Keeps compatibility text or explicit text blocks alongside structured data.
+    #[test]
+    fn structured_responses_preserve_text() {
+        let payload = json!({"value": 42});
+        for (output, content) in [
+            (
+                ToolOutput::json(&payload),
+                json!([{"type": "text", "text": "{\"value\":42}"}]),
+            ),
+            (
+                ToolOutput::new()
+                    .text("first")
+                    .text("second")
+                    .structured(&payload),
+                json!([{"type": "text", "text": "first"}, {"type": "text", "text": "second"}]),
+            ),
+        ] {
+            let result =
+                serde_json::to_value(output.into_tool_response()).expect("serialized response");
+            assert_eq!(
+                result,
+                json!({
+                    "content": content,
+                    "isError": false,
+                    "structuredContent": payload
+                })
+            );
         }
-
-        let def = ToolDefinition::from_tool::<TestInput>();
-        assert_eq!(def.name, "test_tool");
-        assert_eq!(def.description, "A test tool");
-        assert_eq!(def.input_schema.type_(), "object");
-        assert!(def.input_schema.properties.is_some());
-    }
-
-    #[test]
-    fn field_docstrings_become_schema_descriptions() {
-        #[allow(dead_code)]
-        #[derive(Debug, schemars::JsonSchema, serde::Deserialize)]
-        struct TestInput {
-            /// The city to look up.
-            city: String,
-            /// Temperature unit preference.
-            units: Option<String>,
-        }
-
-        impl super::ToolDef for TestInput {
-            const NAME: &'static str = "test";
-            const DESCRIPTION: &'static str = "Test";
-        }
-
-        let def = ToolDefinition::from_tool::<TestInput>();
-        let props = def.input_schema.properties.expect("properties");
-        let city_prop = props.get("city").expect("city property");
-        let city_desc = city_prop.get("description").and_then(|v| v.as_str());
-        assert_eq!(city_desc, Some("The city to look up."));
-
-        let units_prop = props.get("units").expect("units property");
-        let units_desc = units_prop.get("description").and_then(|v| v.as_str());
-        assert_eq!(units_desc, Some("Temperature unit preference."));
-    }
-
-    #[test]
-    fn tool_output_from_string() {
-        let result = "hello".into_tool_response();
-        let json = serde_json::to_value(&result).expect("serialize");
-        let content = json.get("content").expect("content field");
-        assert!(content.is_array());
-        assert_eq!(content.as_array().expect("array").len(), 1);
-        assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(false));
-    }
-
-    #[test]
-    fn tool_output_from_owned_string() {
-        let result = String::from("hello").into_tool_response();
-        let json = serde_json::to_value(&result).expect("serialize");
-        let content = json.get("content").expect("content field");
-        assert!(content.is_array());
-    }
-
-    #[test]
-    fn tool_output_json_sets_structured_content() {
-        #[derive(serde::Serialize)]
-        struct Data {
-            value: i32,
-        }
-        let result = ToolOutput::json(&Data { value: 42 }).into_tool_response();
-        let json = serde_json::to_value(&result).expect("serialize");
-        assert!(json.get("structuredContent").is_some());
-        assert!(json.get("content").expect("content").is_array());
-    }
-
-    #[test]
-    fn result_err_sets_is_error() {
-        let result: Result<String, &str> = Err("something failed");
-        let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
-        assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(true));
-    }
-
-    #[test]
-    fn result_ok_sets_is_error_false() {
-        let result: Result<&str, &str> = Ok("success");
-        let json = serde_json::to_value(&result.into_tool_response()).expect("serialize");
-        assert_eq!(json.get("isError").and_then(|v| v.as_bool()), Some(false));
-    }
-
-    #[test]
-    fn tool_output_builder_multiple_text_blocks() {
-        let result = ToolOutput::new()
-            .text("first")
-            .text("second")
-            .into_tool_response();
-        let json = serde_json::to_value(&result).expect("serialize");
-        let content = json.get("content").expect("content");
-        assert_eq!(content.as_array().expect("array").len(), 2);
-    }
-
-    #[test]
-    fn tool_output_builder_text_and_structured() {
-        #[derive(serde::Serialize)]
-        struct Data {
-            value: i32,
-        }
-        let result = ToolOutput::new()
-            .text("summary")
-            .structured(&Data { value: 1 })
-            .into_tool_response();
-        let json = serde_json::to_value(&result).expect("serialize");
-        assert!(json.get("structuredContent").is_some());
-        assert_eq!(
-            json.get("content")
-                .expect("content")
-                .as_array()
-                .expect("array")
-                .len(),
-            1
-        );
     }
 
     #[test]
@@ -1439,49 +1359,47 @@ mod tests {
         "#);
     }
 
+    /// Preserves binary payloads and MIME types while displaying only metadata.
     #[test]
-    fn tool_output_image_block() {
+    fn binary_content_and_display() {
         let png_data = b"\x89PNG\r\n\x1a\n";
-        let output = ToolOutput::new().image(png_data, "image/png");
-        insta::assert_snapshot!(output.to_string(), @"[Image: image/png, 12 bytes]");
-    }
-
-    #[test]
-    fn tool_output_audio_block() {
         let wav_header = b"RIFF\x00\x00\x00\x00WAVEfmt ";
-        let output = ToolOutput::new().audio(wav_header, "audio/wav");
-        insta::assert_snapshot!(output.to_string(), @"[Audio: audio/wav, 24 bytes]");
+        let output = ToolOutput::new()
+            .image(png_data, "image/png")
+            .audio(wav_header, "audio/wav");
+        let [
+            ContentBlock::ImageContent(image),
+            ContentBlock::AudioContent(audio),
+        ] = output.content_blocks()
+        else {
+            panic!("expected image and audio content");
+        };
+        assert_eq!(image.mime_type, "image/png");
+        assert_eq!(audio.mime_type, "audio/wav");
+        assert_eq!(STANDARD.decode(&image.data).expect("image data"), png_data);
+        assert_eq!(
+            STANDARD.decode(&audio.data).expect("audio data"),
+            wav_header
+        );
+        insta::assert_snapshot!(output.to_string(), @r"
+        [Image: image/png, 12 bytes]
+
+        [Audio: audio/wav, 24 bytes]
+        ");
     }
 
+    /// Formats source errors without requiring nested display implementations.
     #[test]
     fn with_source_formats_error_chain() {
-        use std::fmt;
+        /// An outer error that does not display its source.
+        #[derive(Debug, Error)]
+        #[error("outer error")]
+        struct OuterError(#[source] InnerError);
 
-        #[derive(Debug)]
-        struct OuterError(InnerError);
-
-        impl fmt::Display for OuterError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "outer error")
-            }
-        }
-
-        impl std::error::Error for OuterError {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                Some(&self.0)
-            }
-        }
-
-        #[derive(Debug)]
+        /// The underlying failure.
+        #[derive(Debug, Error)]
+        #[error("inner cause")]
         struct InnerError;
-
-        impl fmt::Display for InnerError {
-            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                write!(f, "inner cause")
-            }
-        }
-
-        impl std::error::Error for InnerError {}
 
         let wrapped = super::WithSource(OuterError(InnerError));
         assert_eq!(wrapped.to_string(), "outer error: inner cause");
