@@ -442,8 +442,8 @@ impl<R: ToolRegistry> McpServer<R> {
 
     /// Handles a `tools/list` request.
     fn handle_tool_list(&self, id: RequestId) -> Output<R> {
-        // Tools stay as JSON values because the generated MCP 2025-11-25 input schema type cannot
-        // carry the `$defs` that `ToolDefinition` adds for rare recursive input types.
+        // Tools stay as JSON values because the generated MCP input schema type
+        // cannot carry all schema keywords preserved by `ToolDefinition`.
         let tools = R::definitions()
             .into_iter()
             .map(ToolDefinition::into_mcp_tool)

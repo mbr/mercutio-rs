@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Preserve root-level `additionalProperties` in advertised MCP tool input schemas, retaining unknown-field restrictions and map value schemas.
+
 ## [0.9.0-alpha.1] - 2026-08-30
 
 ### Added

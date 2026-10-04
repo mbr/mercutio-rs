@@ -489,10 +489,12 @@ pub struct ToolDefinition {
     pub name: String,
     /// Tool description.
     pub description: String,
-    /// JSON Schema for the input parameters.
+    /// Compact JSON Schema representation for the input parameters.
+    ///
+    /// Use [`Self::into_mcp_tool`] for serialization with supplemental schema keywords.
     pub input_schema: ToolInputSchema,
-    /// Definitions required by recursive input types.
-    input_schema_definitions: serde_json::Map<String, serde_json::Value>,
+    /// Root schema keywords not represented by the generated MCP type.
+    input_schema_extra: serde_json::Map<String, serde_json::Value>,
 }
 
 impl ToolDefinition {
@@ -510,12 +512,12 @@ impl ToolDefinition {
         // also advertising `null`, which keeps model-facing schemas smaller without changing
         // deserialization. Schemars 1 no longer exposes a generator setting for this policy.
         compact_optional_properties(&mut json);
-        let (input_schema, input_schema_definitions) = convert_schema_to_tool_input(&json);
+        let (input_schema, input_schema_extra) = convert_schema_to_tool_input(&json);
         Self {
             name: T::NAME.to_string(),
             description: T::DESCRIPTION.to_string(),
             input_schema,
-            input_schema_definitions,
+            input_schema_extra,
         }
     }
 
@@ -524,18 +526,12 @@ impl ToolDefinition {
         let mut value =
             serde_json::to_value(&self.input_schema).expect("ToolInputSchema serialization failed");
 
-        if !self.input_schema_definitions.is_empty() {
-            // The generated MCP 2025-11-25 type cannot store additional JSON Schema keywords,
-            // although the wire schema permits them. Merge the rare recursive definitions only
-            // at this serialization boundary instead of maintaining duplicate protocol types.
-            value
-                .as_object_mut()
-                .expect("Tool input schema must be an object")
-                .insert(
-                    "$defs".into(),
-                    serde_json::Value::Object(self.input_schema_definitions.clone()),
-                );
-        }
+        // The generated MCP type cannot store all permitted JSON Schema keywords.
+        // Restore supplemental keywords at the serialization boundary.
+        value
+            .as_object_mut()
+            .expect("Tool input schema must be an object")
+            .extend(self.input_schema_extra.clone());
 
         value
     }
@@ -799,7 +795,7 @@ fn remove_null_variant(schema: &mut serde_json::Value) {
     object.insert("anyOf".into(), serde_json::Value::Array(choices));
 }
 
-/// Converts a generated JSON Schema to its compact MCP representation.
+/// Converts a generated JSON Schema to typed MCP fields and supplemental keywords.
 fn convert_schema_to_tool_input(
     schema: &serde_json::Value,
 ) -> (ToolInputSchema, serde_json::Map<String, serde_json::Value>) {
@@ -825,16 +821,16 @@ fn convert_schema_to_tool_input(
                 .collect::<BTreeMap<_, _>>()
         });
 
-    let definitions = schema
-        .get("$defs")
-        .and_then(serde_json::Value::as_object)
-        .cloned()
-        .unwrap_or_default();
+    let extra = ["$defs", "additionalProperties"]
+        .into_iter()
+        .filter_map(|key| {
+            schema
+                .get(key)
+                .map(|value| (key.to_string(), value.clone()))
+        })
+        .collect();
 
-    (
-        ToolInputSchema::new(required, properties, None),
-        definitions,
-    )
+    (ToolInputSchema::new(required, properties, None), extra)
 }
 
 /// Registry of available tools.
