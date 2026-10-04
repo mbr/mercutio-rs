@@ -1,6 +1,7 @@
 //! Integration tests for the `tool_registry!` macro.
 
-use mercutio::{McpServer, Output, ToolRegistry, parse_line};
+use mercutio::{McpServer, Output, parse_line};
+use serde_json::json;
 
 mercutio::tool_registry! {
     enum TestTools {
@@ -35,14 +36,6 @@ fn initialized_server() -> McpServer<TestTools> {
 }
 
 #[test]
-fn macro_generates_valid_registry() {
-    let definitions = TestTools::definitions();
-    assert_eq!(definitions.len(), 2);
-    assert_eq!(definitions[0].name, "get_weather");
-    assert_eq!(definitions[1].name, "ping");
-}
-
-#[test]
 fn macro_generated_tools_work_with_server() {
     let mut server = initialized_server();
 
@@ -52,10 +45,13 @@ fn macro_generated_tools_work_with_server() {
         panic!("expected tool list response");
     };
     let response = serde_json::to_value(response.into_inner()).expect("serializable response");
-    assert_eq!(
-        response["result"]["tools"].as_array().map(Vec::len),
-        Some(2)
-    );
+    let names = response["result"]["tools"]
+        .as_array()
+        .expect("listed tools")
+        .iter()
+        .map(|tool| tool["name"].as_str().expect("tool name"))
+        .collect::<Vec<_>>();
+    assert_eq!(names, ["get_weather", "ping"]);
     assert_eq!(
         response["result"]["tools"][0]["inputSchema"]["properties"]["city"]["type"],
         "string"
@@ -72,10 +68,14 @@ fn macro_generated_tools_work_with_server() {
         } => {
             assert_eq!(input.city, "Berlin");
             let response = responder.respond("Sunny, 22C");
-            assert!(matches!(
-                response.as_inner(),
-                mercutio::rust_mcp_schema::JsonrpcMessage::ResultResponse(_)
-            ));
+            assert_eq!(
+                serde_json::to_value(response.into_inner()).expect("serialized response"),
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": "3",
+                    "result": {"content": [{"type": "text", "text": "Sunny, 22C"}], "isError": false}
+                })
+            );
         }
         _ => panic!("expected ToolCall"),
     }
