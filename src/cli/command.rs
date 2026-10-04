@@ -36,10 +36,13 @@ pub(super) fn root_command<R: ToolRegistry>(
             Arg::new("artifact-dir")
                 .long("artifact-dir")
                 .value_name("DIR")
-                .help("Parent directory for artifact output")
+                .help_heading("Output options (before the command)")
+                .hide_short_help(true)
+                .help("Save generated files under DIR")
                 .long_help(
-                    "Parent directory for artifact output. A private unique invocation \
-                     directory is created beneath it.",
+                    "Save generated files beneath this directory (default: system temporary \
+                     directory). Each invocation uses its own directory and prints absolute \
+                     file paths.\n\nOnly available with --output artifacts.",
                 ),
         );
     if let Some(about) = about {
@@ -58,8 +61,8 @@ pub(super) fn root_command<R: ToolRegistry>(
             .map(|tool| tool.cli_name.as_str())
             .collect::<Vec<_>>();
         let mut input_help = String::from(
-            "Selects a command and reads exactly one complete JSON object from standard \
-             input through EOF. Cannot be combined with a command subcommand.",
+            "Select a command and read its arguments as one complete JSON object from stdin \
+             through EOF. Cannot be combined with a subcommand or its argument options.",
         );
         if !whole_input_only.is_empty() {
             input_help.push_str("\n\nWhole-input-only commands: ");
@@ -70,12 +73,15 @@ pub(super) fn root_command<R: ToolRegistry>(
             .iter()
             .map(|tool| tool.cli_name.clone())
             .collect::<Vec<_>>();
+        input_help.push_str("\n\nCommands: ");
+        input_help.push_str(&values.join(", "));
         command = command.arg(
             Arg::new("input-json-route")
                 .long("input-json")
-                .value_name("TOOL")
+                .value_name("COMMAND")
                 .value_parser(PossibleValuesParser::new(values))
-                .help("Reads the selected tool's JSON object from stdin")
+                .hide_possible_values(true)
+                .help("Read arguments from stdin as JSON")
                 .long_help(input_help),
         );
     }
@@ -232,17 +238,23 @@ fn output_arg() -> Arg {
         .long("output")
         .value_name("MODE")
         .default_value("artifacts")
+        .help_heading("Output options (before the command)")
+        .hide_default_value(true)
+        .hide_possible_values(true)
         .value_parser(PossibleValuesParser::new([
             "artifacts",
             "structured",
             "raw",
             "binary",
         ]))
-        .help("Selects artifacts, structured, raw, or binary output")
+        .help("Choose output format")
         .long_help(
-            "Selects output: artifacts renders text and saves binary blocks; structured writes \
-             structuredContent JSON; raw writes the complete MCP result as JSON; binary writes \
-             exactly one decoded binary block. Output options must precede the command.",
+            "Choose output format:\n\n\
+             artifacts   Readable text and generated file paths (default)\n\
+             structured  JSON data only; requires structured output\n\
+             raw         Complete MCP result as JSON, including encoded file data\n\
+             binary      Bytes of exactly one image, audio item, or embedded file\n\n\
+             In binary mode, bytes go to stdout and accompanying text goes to stderr.",
         )
 }
 
@@ -252,6 +264,18 @@ fn image_arg() -> Arg {
         .long("images")
         .value_name("MODE")
         .default_value("auto")
+        .help_heading("Output options (before the command)")
+        .hide_short_help(true)
+        .hide_default_value(true)
+        .hide_possible_values(true)
         .value_parser(PossibleValuesParser::new(["auto", "kitty", "off"]))
-        .help("Controls Kitty image display in artifact output")
+        .help("Control inline image display")
+        .long_help(
+            "Control inline PNG image display:\n\n\
+             auto   Display on recognized compatible terminals (default)\n\
+             kitty  Force Kitty image display\n\
+             off    Do not display inline images\n\n\
+             Automatic display is disabled for pipes, redirected output, and custom output \
+             writers. Files are saved in every mode. Only available with --output artifacts.",
+        )
 }

@@ -95,9 +95,11 @@ fn representative_help_is_stable() {
         .clone();
     let tool_help = search.render_long_help().to_string();
 
-    insta::assert_snapshot!(format!(
-        "{short_help}\n--- LONG ---\n{long_help}\n--- TOOL ---\n{tool_help}"
-    ));
+    insta::with_settings!({filters => vec![(r"(?m)[ \t]+$", "")]}, {
+        insta::assert_snapshot!(format!(
+            "{short_help}\n--- LONG ---\n{long_help}\n--- TOOL ---\n{tool_help}"
+        ));
+    });
 }
 
 /// Allows either help field to be omitted, including on empty nested registries.

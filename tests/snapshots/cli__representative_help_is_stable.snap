@@ -11,12 +11,12 @@ Commands:
   http-server   Checks service health
 
 Options:
-      --output <MODE>       Selects artifacts, structured, raw, or binary output [default: artifacts] [possible values: artifacts, structured, raw, binary]
-      --images <MODE>       Controls Kitty image display in artifact output [default: auto] [possible values: auto, kitty, off]
-      --artifact-dir <DIR>  Parent directory for artifact output
-      --input-json <TOOL>   Reads the selected tool's JSON object from stdin [possible values: search-items, http-server]
-  -h, --help                Print help (see more with '--help')
-  -V, --version             Print version
+      --input-json <COMMAND>  Read arguments from stdin as JSON
+  -h, --help                  Print help (see more with '--help')
+  -V, --version               Print version
+
+Output options (before the command):
+      --output <MODE>  Choose output format
 
 Use --help for the full reference.
 
@@ -34,31 +34,41 @@ Commands:
   http-server   Checks service health
 
 Options:
-      --output <MODE>
-          Selects output: artifacts renders text and saves binary blocks; structured writes structuredContent JSON; raw writes the complete MCP result as JSON; binary writes exactly one decoded binary block. Output options must precede the command.
-          
-          [default: artifacts]
-          [possible values: artifacts, structured, raw, binary]
+      --input-json <COMMAND>
+          Select a command and read its arguments as one complete JSON object from stdin through EOF. Cannot be combined with a subcommand or its argument options.
 
-      --images <MODE>
-          Controls Kitty image display in artifact output
-          
-          [default: auto]
-          [possible values: auto, kitty, off]
-
-      --artifact-dir <DIR>
-          Parent directory for artifact output. A private unique invocation directory is created beneath it.
-
-      --input-json <TOOL>
-          Selects a command and reads exactly one complete JSON object from standard input through EOF. Cannot be combined with a command subcommand.
-          
-          [possible values: search-items, http-server]
+          Commands: search-items, http-server
 
   -h, --help
           Print help (see a summary with '-h')
 
   -V, --version
           Print version
+
+Output options (before the command):
+      --output <MODE>
+          Choose output format:
+
+          artifacts   Readable text and generated file paths (default)
+          structured  JSON data only; requires structured output
+          raw         Complete MCP result as JSON, including encoded file data
+          binary      Bytes of exactly one image, audio item, or embedded file
+
+          In binary mode, bytes go to stdout and accompanying text goes to stderr.
+
+      --images <MODE>
+          Control inline PNG image display:
+
+          auto   Display on recognized compatible terminals (default)
+          kitty  Force Kitty image display
+          off    Do not display inline images
+
+          Automatic display is disabled for pipes, redirected output, and custom output writers. Files are saved in every mode. Only available with --output artifacts.
+
+      --artifact-dir <DIR>
+          Save generated files beneath this directory (default: system temporary directory). Each invocation uses its own directory and prints absolute file paths.
+
+          Only available with --output artifacts.
 
 --- TOOL ---
 Searches indexed items
@@ -68,7 +78,7 @@ Usage: search-items [OPTIONS] --mode <STRING> --query <STRING>
 Options:
       --mode <STRING>
           Search strategy.
-          
+
           [possible values: fast, thorough]
 
       --query <STRING>
@@ -94,7 +104,7 @@ Options:
 
       --recursive [<BOOL>]
           Whether to recurse. Accepts --option, --option=true, or --option=false forms.
-          
+
           [possible values: true, false]
 
       --rules <JSON>
