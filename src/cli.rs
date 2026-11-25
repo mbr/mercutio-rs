@@ -73,10 +73,10 @@ use crate::ToolRegistry;
 ///
 /// let cli = Tools::cli("issues").context::<ProjectContext>().build()?;
 /// cli.run_on(
-///     ["issues", "--project", "marc/general", "list"],
+///     ["issues", "--project", "example", "list"],
 ///     io::empty(), io::sink(), io::sink(),
 ///     |context, _session, _tool| {
-///         assert_eq!(context.project, "marc/general");
+///         assert_eq!(context.project, "example");
 ///         Ok::<_, Infallible>("listed")
 ///     },
 /// )?;
