@@ -1,37 +1,13 @@
 //! MCP server configuration and builder.
 
-use std::{fmt, marker::PhantomData, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use rust_mcp_schema::{Implementation, ServerCapabilities, ServerCapabilitiesTools};
 
 use crate::{McpServer, Phase, ToolRegistry};
 
-/// Supplies fixed or context-dependent initialization instructions.
-pub(crate) enum Instructions<C> {
-    /// Fixed server instructions.
-    Static(String),
-    /// Generates instructions from the initialization request's context.
-    Contextual(Box<dyn Fn(&C) -> String + Send + Sync>),
-}
-
-impl<C> Instructions<C> {
-    /// Resolves instructions without retaining the context.
-    pub fn resolve(&self, context: &C) -> String {
-        match self {
-            Self::Static(text) => text.clone(),
-            Self::Contextual(callback) => callback(context),
-        }
-    }
-}
-
-impl<C> fmt::Display for Instructions<C> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Static(text) => f.write_str(text),
-            Self::Contextual(_) => f.write_str("[context-dependent instructions]"),
-        }
-    }
-}
+/// Generates instructions from the initialization request's context.
+pub(crate) type Instructions<C> = dyn Fn(&C) -> String + Send + Sync;
 
 /// Server configuration for MCP initialization.
 pub(crate) struct ServerConfig<C> {
@@ -87,30 +63,16 @@ impl<R: ToolRegistry, C> McpServerBuilder<R, C> {
         self
     }
 
-    /// Sets instructions for the LLM on how to use this server.
-    ///
-    /// Replaces previously configured instructions, including callbacks.
-    /// Sent to the client during initialization. The client may incorporate this text into the
-    /// system prompt to help the LLM understand when and how to use the server's tools. Typical
-    /// content includes tool selection guidance, required operation sequences, or domain-specific
-    /// constraints. Note that client support for this field varies.
-    ///
-    /// See <https://blog.modelcontextprotocol.io/posts/2025-11-03-using-server-instructions/> for
-    /// examples.
-    pub fn instructions<S: Into<String>>(&mut self, instructions: S) -> &mut Self {
-        self.instructions = Some(Arc::new(Instructions::Static(instructions.into())));
-        self
-    }
-
     /// Generates server instructions from the initialization request's context.
     ///
-    /// Replaces previously configured instructions. The callback runs only during
-    /// initialization; clients must reconnect to receive changed instructions.
-    pub fn instructions_with<F>(&mut self, callback: F) -> &mut Self
+    /// Replaces the previous callback and runs only during initialization; clients
+    /// must reconnect to receive changed instructions. Client support varies.
+    /// For fixed text, use `|_| "Instructions.".to_owned()`.
+    pub fn instructions<F>(&mut self, callback: F) -> &mut Self
     where
         F: Fn(&C) -> String + Send + Sync + 'static,
     {
-        self.instructions = Some(Arc::new(Instructions::Contextual(Box::new(callback))));
+        self.instructions = Some(Arc::new(callback));
         self
     }
 
@@ -210,8 +172,8 @@ mod tests {
         let prefix = String::from("Project: ");
         let mut builder = McpServer::<NoTools, String>::builder();
         builder
-            .instructions("replaced")
-            .instructions_with(move |context| {
+            .instructions(|_| "replaced".to_owned())
+            .instructions(move |context| {
                 counter.fetch_add(1, Ordering::SeqCst);
                 format!("{prefix}{context}")
             });
@@ -219,14 +181,14 @@ mod tests {
             builder
                 .build()
                 .to_string()
-                .contains("[context-dependent instructions]")
+                .contains("[instructions callback]")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 0);
         for project in ["first", "second"] {
             let result = advertised_configuration(builder.build(), &project.to_owned());
             assert_eq!(result["instructions"], format!("Project: {project}"));
         }
-        builder.instructions("fixed");
+        builder.instructions(|_| "fixed".to_owned());
         let result = advertised_configuration(builder.build(), &String::new());
         assert_eq!(result["instructions"], "fixed");
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -239,7 +201,7 @@ mod tests {
             .name("test-server")
             .version("1.2.3")
             .title("Test Server")
-            .instructions("Use this server for testing.")
+            .instructions(|_| "Use this server for testing.".to_owned())
             .build();
         let result = advertised_configuration(server, &());
         assert_eq!(

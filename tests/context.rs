@@ -273,9 +273,7 @@ mod stdio {
 
     /// Generates instructions using the same startup context as tool calls.
     fn server() -> McpServer<ReadContext, Context> {
-        McpServer::builder()
-            .instructions_with(Context::report)
-            .build()
+        McpServer::builder().instructions(Context::report).build()
     }
 
     /// Extracts startup context, rejecting before reading input.
@@ -404,7 +402,7 @@ mod http {
     #[tokio::test]
     async fn request_context_is_not_session_state() {
         let mut builder = McpServer::builder();
-        builder.instructions_with(Context::report);
+        builder.instructions(Context::report);
         let router = McpRouter::builder(builder, Handler)
             .storage(InMemoryStorage::new(1, Duration::from_secs(60)))
             .build();

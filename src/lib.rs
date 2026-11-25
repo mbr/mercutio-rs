@@ -89,7 +89,7 @@ enum Phase {
 /// # Snapshot Testing
 ///
 /// `McpServer` implements [`fmt::Display`] to render the full server document: name, version,
-/// instructions, and tool definitions. Contextual instructions appear as a placeholder;
+/// instructions, and tool definitions. Instructions appear as a callback placeholder;
 /// inspect the initialization response to test their resolved text.
 /// Use this for snapshot testing with `insta`:
 ///
@@ -99,7 +99,7 @@ enum Phase {
 ///     let server = McpServer::<MyTools>::builder()
 ///         .name("my-server")
 ///         .version("1.0.0")
-///         .instructions("You are a helpful assistant.")
+///         .instructions(|_| "You are a helpful assistant.".to_owned())
 ///         .build();
 ///     insta::assert_snapshot!(server.to_string());
 /// }
@@ -408,7 +408,7 @@ impl<R: ToolRegistry, C> McpServer<R, C> {
                 .config
                 .instructions
                 .as_ref()
-                .map(|text| text.resolve(context)),
+                .map(|instructions| instructions(context)),
             meta: None,
         };
 
@@ -500,11 +500,11 @@ impl<R: ToolRegistry, C> fmt::Display for McpServer<R, C> {
         writeln!(f)?;
         writeln!(f, "Version: {}", self.config.info.version)?;
 
-        if let Some(instructions) = &self.config.instructions {
+        if self.config.instructions.is_some() {
             writeln!(f)?;
             writeln!(f, "## Instructions")?;
             writeln!(f)?;
-            writeln!(f, "{instructions}")?;
+            writeln!(f, "[instructions callback]")?;
         }
 
         let defs = R::definitions();

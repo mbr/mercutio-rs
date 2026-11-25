@@ -182,10 +182,10 @@ Use `McpServer::<Tools, Context>::builder()` for a contextual MCP server. Its in
 
 ```rust,ignore
 let mut builder = McpServer::<Tools, Context>::builder();
-builder.instructions_with(|context| context.instructions.clone());
+builder.instructions(|context| context.instructions.clone());
 ```
 
-The callback replaces any static `.instructions(...)` text and runs only during initialization. The last setter wins; clients must reconnect to receive changed instructions. Sans-I/O callers pass context through `server.handle_with_context(&context, message)`; transports do this automatically. Tool definitions and native CLI help are unchanged.
+For fixed text, use `.instructions(|_| "Instructions.".to_owned())`. The callback runs only during initialization; clients must reconnect to receive changed instructions. Sans-I/O callers pass context through `server.handle_with_context(&context, message)`; transports do this automatically. Tool definitions and native CLI help are unchanged.
 
 ## Testing
 

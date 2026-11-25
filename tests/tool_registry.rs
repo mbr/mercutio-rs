@@ -131,7 +131,7 @@ fn server_display() {
     let server = McpServer::<TestTools>::builder()
         .name("weather-service")
         .version("1.0.0")
-        .instructions("You help users check the weather.")
+        .instructions(|_| "You help users check the weather.".to_owned())
         .build();
 
     insta::assert_snapshot!(server.to_string(), @r"
@@ -141,7 +141,7 @@ fn server_display() {
 
     ## Instructions
 
-    You help users check the weather.
+    [instructions callback]
 
     # Tools
 
