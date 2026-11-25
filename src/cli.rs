@@ -32,18 +32,70 @@ use crate::ToolRegistry;
 
 /// Extracts application context from a native CLI invocation.
 ///
-/// Context options belong to the root command, separate from tool arguments.
-/// Extracts after successful tool parsing, not for help or version requests.
+/// [`augment_command`](Self::augment_command) adds context options to the root
+/// command, separate from tool arguments. [`from_cli`](Self::from_cli) reads the
+/// parsed matches and constructs the context passed by reference to the handler.
+/// Extraction runs once after successful tool parsing, not for help or version
+/// requests; an extraction error prevents dispatch. `()` adds no options.
+///
+/// Select the context type with [`CliBuilder::context`]:
+///
+/// ```
+/// use std::{convert::Infallible, io};
+///
+/// use clap::{Arg, ArgMatches, Command};
+/// use mercutio::cli::{FromCli, ToolRegistryExt as _};
+///
+/// mercutio::tool_registry! {
+///     enum Tools {
+///         List("list", "Lists project issues") {},
+///     }
+/// }
+///
+/// struct ProjectContext {
+///     project: String,
+/// }
+///
+/// impl FromCli for ProjectContext {
+///     type Error = Infallible;
+///
+///     fn augment_command(command: Command) -> Command {
+///         command.arg(Arg::new("project").long("project").required(true))
+///     }
+///
+///     fn from_cli(matches: &ArgMatches) -> Result<Self, Self::Error> {
+///         Ok(Self {
+///             project: matches.get_one::<String>("project")
+///                 .expect("required by Clap").clone(),
+///         })
+///     }
+/// }
+///
+/// let cli = Tools::cli("issues").context::<ProjectContext>().build()?;
+/// cli.run_on(
+///     ["issues", "--project", "marc/general", "list"],
+///     io::empty(), io::sink(), io::sink(),
+///     |context, _session, _tool| {
+///         assert_eq!(context.project, "marc/general");
+///         Ok::<_, Infallible>("listed")
+///     },
+/// )?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
 pub trait FromCli: Sized {
     /// Error returned when invocation context cannot be constructed.
     type Error: StdError + Send + Sync + 'static;
 
     /// Adds application context options to the generated root command.
+    ///
+    /// The default leaves the command unchanged.
     fn augment_command(command: Command) -> Command {
         command
     }
 
     /// Constructs context from matches rooted at the generated command.
+    ///
+    /// Errors become CLI usage errors and prevent handler execution.
     fn from_cli(matches: &ArgMatches) -> Result<Self, Self::Error>;
 }
 
