@@ -67,6 +67,7 @@ enum Phase {
 ///
 /// Generic over `R: ToolRegistry` which defines the available tools. Defaults to [`NoTools`] for
 /// servers without tools. The registry handles tool parsing and provides type-safe dispatch.
+/// `C` is the application context, defaulting to `()`, borrowed when handling messages.
 ///
 /// # Protocol Flow
 ///
@@ -88,7 +89,9 @@ enum Phase {
 /// # Snapshot Testing
 ///
 /// `McpServer` implements [`fmt::Display`] to render the full server document: name, version,
-/// instructions, and tool definitions. Use this for snapshot testing with `insta`:
+/// instructions, and tool definitions. Contextual instructions appear as a placeholder;
+/// inspect the initialization response to test their resolved text.
+/// Use this for snapshot testing with `insta`:
 ///
 /// ```ignore
 /// #[test]
@@ -101,9 +104,9 @@ enum Phase {
 ///     insta::assert_snapshot!(server.to_string());
 /// }
 /// ```
-pub struct McpServer<R: ToolRegistry = NoTools> {
+pub struct McpServer<R: ToolRegistry = NoTools, C = ()> {
     /// Server configuration.
-    config: ServerConfig,
+    config: ServerConfig<C>,
     /// Current protocol phase.
     phase: Phase,
     /// Tool registry marker.
@@ -305,8 +308,15 @@ fn parse_params<T: serde::de::DeserializeOwned>(
 }
 
 impl<R: ToolRegistry> McpServer<R> {
+    /// Handles a message without application context.
+    pub fn handle(&mut self, msg: JsonrpcMessage) -> Output<R> {
+        self.handle_with_context(&(), msg)
+    }
+}
+
+impl<R: ToolRegistry, C> McpServer<R, C> {
     /// Returns a builder for constructing an [`McpServer`].
-    pub fn builder() -> McpServerBuilder<R> {
+    pub fn builder() -> McpServerBuilder<R, C> {
         McpServerBuilder::new()
     }
 
@@ -331,8 +341,10 @@ impl<R: ToolRegistry> McpServer<R> {
         }
     }
 
-    /// Handles an incoming message and returns the appropriate output.
-    pub fn handle(&mut self, msg: JsonrpcMessage) -> Output<R> {
+    /// Handles a message with borrowed application context.
+    ///
+    /// Context is used to generate initialization instructions and is not retained.
+    pub fn handle_with_context(&mut self, context: &C, msg: JsonrpcMessage) -> Output<R> {
         match (&mut self.phase, msg) {
             // Always respond to pings.
             (_, JsonrpcMessage::Request(req)) if req.method == "ping" => {
@@ -359,7 +371,7 @@ impl<R: ToolRegistry> McpServer<R> {
             }
             (_, JsonrpcMessage::Request(req)) => {
                 let id = req.id;
-                self.handle_request(id.clone(), &req.method, req.params)
+                self.handle_request(context, id.clone(), &req.method, req.params)
                     .unwrap_or_else(|e| Output::Send(e.into_response(id)))
             }
             (_, msg) => Output::ProtocolError(ProtocolError::UnexpectedMessage {
@@ -372,6 +384,7 @@ impl<R: ToolRegistry> McpServer<R> {
     /// Handles the `initialize` request.
     fn handle_initialize(
         &mut self,
+        context: &C,
         id: RequestId,
         params: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> std::result::Result<Output<R>, JsonRpcError> {
@@ -391,7 +404,11 @@ impl<R: ToolRegistry> McpServer<R> {
             protocol_version: LATEST_PROTOCOL_VERSION.into(),
             capabilities: self.config.capabilities.clone(),
             server_info: self.config.info.clone(),
-            instructions: self.config.instructions.clone(),
+            instructions: self
+                .config
+                .instructions
+                .as_ref()
+                .map(|text| text.resolve(context)),
             meta: None,
         };
 
@@ -455,12 +472,15 @@ impl<R: ToolRegistry> McpServer<R> {
     /// Dispatches a request to the appropriate handler based on method and phase.
     fn handle_request(
         &mut self,
+        context: &C,
         id: RequestId,
         method: &str,
         params: Option<serde_json::Map<String, serde_json::Value>>,
     ) -> std::result::Result<Output<R>, JsonRpcError> {
         match (&mut self.phase, method) {
-            (Phase::WaitingForInitialize, "initialize") => self.handle_initialize(id, params),
+            (Phase::WaitingForInitialize, "initialize") => {
+                self.handle_initialize(context, id, params)
+            }
             (Phase::Ready(_), "tools/list") if R::ENABLED => Ok(self.handle_tool_list(id)),
             (Phase::Ready(_), "tools/call") if R::ENABLED => self.handle_tool_call(id, params),
             (Phase::Ready(_), method) => Err(JsonRpcError::MethodNotFound {
@@ -474,7 +494,7 @@ impl<R: ToolRegistry> McpServer<R> {
     }
 }
 
-impl<R: ToolRegistry> fmt::Display for McpServer<R> {
+impl<R: ToolRegistry, C> fmt::Display for McpServer<R, C> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "# {}", self.config.info.name)?;
         writeln!(f)?;

@@ -259,12 +259,23 @@ mod stdio {
             .map(|line| serde_json::from_str(line).expect("JSON"))
             .collect();
         assert_eq!(responses.len(), 3);
+        assert_eq!(
+            responses[0]["result"]["instructions"],
+            format!("{project}:0")
+        );
         for (index, response) in responses[1..].iter().enumerate() {
             assert_eq!(
                 response["result"]["content"][0]["text"],
-                format!("{project}:{index}")
+                format!("{project}:{}", index + 1)
             );
         }
+    }
+
+    /// Generates instructions using the same startup context as tool calls.
+    fn server() -> McpServer<ReadContext, Context> {
+        McpServer::builder()
+            .instructions_with(Context::report)
+            .build()
     }
 
     /// Extracts startup context, rejecting before reading input.
@@ -275,7 +286,7 @@ mod stdio {
         mercutio::io::stdlib::run_on(
             Cursor::new(INPUT),
             &mut output,
-            McpServer::builder().build(),
+            server(),
             |context: &Context, session, _: ReadContext| {
                 assert!(session.is_none());
                 Ok::<_, io::Error>(context.report())
@@ -303,14 +314,9 @@ mod stdio {
     #[tokio::test]
     async fn asynchronous_context() {
         let mut output = Vec::new();
-        mercutio::io::tokio::run_on(
-            Cursor::new(INPUT),
-            &mut output,
-            McpServer::builder().build(),
-            Handler,
-        )
-        .await
-        .expect("stdio context");
+        mercutio::io::tokio::run_on(Cursor::new(INPUT), &mut output, server(), Handler)
+            .await
+            .expect("stdio context");
         assert_reports(&output, "stdio");
 
         let mut input = Cursor::new(INPUT);
@@ -384,10 +390,22 @@ mod http {
             .expect("response")
     }
 
+    /// Checks instructions advertised by a newly initialized connection.
+    async fn assert_instructions(response: Response, expected: &str) {
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let result: Value = serde_json::from_slice(&bytes).expect("JSON");
+        assert_eq!(result["result"]["instructions"], expected);
+    }
+
     /// Re-extracts per request and isolates overlapping calls.
     #[tokio::test]
     async fn request_context_is_not_session_state() {
-        let router = McpRouter::builder(McpServer::builder(), Handler)
+        let mut builder = McpServer::builder();
+        builder.instructions_with(Context::report);
+        let router = McpRouter::builder(builder, Handler)
             .storage(InMemoryStorage::new(1, Duration::from_secs(60)))
             .build();
         let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
@@ -405,6 +423,7 @@ mod http {
             .to_str()
             .expect("session")
             .to_owned();
+        assert_instructions(response, "marc/general:0").await;
         let initialized = r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#;
         assert_eq!(
             request(
@@ -452,5 +471,10 @@ mod http {
                 .expect("delete response");
             assert_eq!(response.status(), status);
         }
+        assert_instructions(
+            request(&router, "/?project=example", None, initialize).await,
+            "example:0",
+        )
+        .await;
     }
 }

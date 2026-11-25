@@ -69,7 +69,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 ///
 /// Partially cancellation-safe. If cancelled mid-write, the client may receive a truncated
 /// response.
-pub async fn run_stdio<R, C, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub async fn run_stdio<R, C, H>(server: McpServer<R, C>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
     C: FromStdio,
@@ -87,7 +87,7 @@ where
 pub async fn run_on<R, C, H, I, O>(
     mut input: I,
     mut output: O,
-    mut server: McpServer<R>,
+    mut server: McpServer<R, C>,
     mut handler: H,
 ) -> Result<(), IoError>
 where
@@ -109,7 +109,7 @@ where
 
         let msg = crate::parse_line(line.trim_end()).map_err(IoError::Parse)?;
 
-        let response = match server.handle(msg) {
+        let response = match server.handle_with_context(&context, msg) {
             Output::Send(response) => response,
             Output::ToolCall { tool, responder } => {
                 responder.respond(handler.handle(&context, None, tool).await)

@@ -1,23 +1,50 @@
 //! MCP server configuration and builder.
 
-use std::marker::PhantomData;
+use std::{fmt, marker::PhantomData, sync::Arc};
 
 use rust_mcp_schema::{Implementation, ServerCapabilities, ServerCapabilitiesTools};
 
 use crate::{McpServer, Phase, ToolRegistry};
 
+/// Supplies fixed or context-dependent initialization instructions.
+pub(crate) enum Instructions<C> {
+    /// Fixed server instructions.
+    Static(String),
+    /// Generates instructions from the initialization request's context.
+    Contextual(Box<dyn Fn(&C) -> String + Send + Sync>),
+}
+
+impl<C> Instructions<C> {
+    /// Resolves instructions without retaining the context.
+    pub fn resolve(&self, context: &C) -> String {
+        match self {
+            Self::Static(text) => text.clone(),
+            Self::Contextual(callback) => callback(context),
+        }
+    }
+}
+
+impl<C> fmt::Display for Instructions<C> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Static(text) => f.write_str(text),
+            Self::Contextual(_) => f.write_str("[context-dependent instructions]"),
+        }
+    }
+}
+
 /// Server configuration for MCP initialization.
-pub(crate) struct ServerConfig {
+pub(crate) struct ServerConfig<C> {
     /// Server implementation info sent during initialization.
     pub info: Implementation,
     /// Server capabilities advertised to the client.
     pub capabilities: ServerCapabilities,
     /// Optional LLM instructions sent during initialization.
-    pub instructions: Option<String>,
+    pub instructions: Option<Arc<Instructions<C>>>,
 }
 
 /// Builder for constructing an [`McpServer`].
-pub struct McpServerBuilder<R: ToolRegistry> {
+pub struct McpServerBuilder<R: ToolRegistry, C = ()> {
     /// Server name.
     name: String,
     /// Server version.
@@ -25,12 +52,12 @@ pub struct McpServerBuilder<R: ToolRegistry> {
     /// Optional human-readable title.
     title: Option<String>,
     /// Optional LLM instructions.
-    instructions: Option<String>,
+    instructions: Option<Arc<Instructions<C>>>,
     /// Tool registry marker.
     _marker: PhantomData<R>,
 }
 
-impl<R: ToolRegistry> McpServerBuilder<R> {
+impl<R: ToolRegistry, C> McpServerBuilder<R, C> {
     /// Creates a new builder with default values.
     pub(crate) fn new() -> Self {
         Self {
@@ -62,6 +89,7 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 
     /// Sets instructions for the LLM on how to use this server.
     ///
+    /// Replaces previously configured instructions, including callbacks.
     /// Sent to the client during initialization. The client may incorporate this text into the
     /// system prompt to help the LLM understand when and how to use the server's tools. Typical
     /// content includes tool selection guidance, required operation sequences, or domain-specific
@@ -70,12 +98,24 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
     /// See <https://blog.modelcontextprotocol.io/posts/2025-11-03-using-server-instructions/> for
     /// examples.
     pub fn instructions<S: Into<String>>(&mut self, instructions: S) -> &mut Self {
-        self.instructions = Some(instructions.into());
+        self.instructions = Some(Arc::new(Instructions::Static(instructions.into())));
+        self
+    }
+
+    /// Generates server instructions from the initialization request's context.
+    ///
+    /// Replaces previously configured instructions. The callback runs only during
+    /// initialization; clients must reconnect to receive changed instructions.
+    pub fn instructions_with<F>(&mut self, callback: F) -> &mut Self
+    where
+        F: Fn(&C) -> String + Send + Sync + 'static,
+    {
+        self.instructions = Some(Arc::new(Instructions::Contextual(Box::new(callback))));
         self
     }
 
     /// Builds the [`McpServer`].
-    pub fn build(&self) -> McpServer<R> {
+    pub fn build(&self) -> McpServer<R, C> {
         let capabilities = ServerCapabilities {
             tools: if R::ENABLED {
                 Some(ServerCapabilitiesTools {
@@ -115,6 +155,11 @@ impl<R: ToolRegistry> McpServerBuilder<R> {
 mod tests {
     //! Verifies configuration as advertised to MCP clients.
 
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use schemars::JsonSchema;
     use serde::Deserialize;
     use serde_json::{Value, json};
@@ -131,10 +176,13 @@ mod tests {
     }
 
     /// Captures the configuration sent in the initialization response.
-    fn advertised_configuration<R: ToolRegistry>(mut server: McpServer<R>) -> Value {
+    fn advertised_configuration<R: ToolRegistry, C>(
+        mut server: McpServer<R, C>,
+        context: &C,
+    ) -> Value {
         let request = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}"#;
         let Output::Send(response) =
-            server.handle(parse_line(request).expect("initialize request"))
+            server.handle_with_context(context, parse_line(request).expect("initialize request"))
         else {
             panic!("expected initialization response");
         };
@@ -145,13 +193,43 @@ mod tests {
     /// Advertises the default identity without tool capabilities or instructions.
     #[test]
     fn advertises_defaults_without_tools() {
-        let result = advertised_configuration(McpServer::<NoTools>::builder().build());
+        let result = advertised_configuration(McpServer::<NoTools>::builder().build(), &());
         assert_eq!(
             result["serverInfo"],
             json!({"name": "unnamed-mcp-server", "version": "0.0.0"})
         );
         assert_eq!(result["capabilities"], json!({}));
         assert!(result.get("instructions").is_none());
+    }
+
+    /// Resolves callbacks only at initialization and honors the last setter.
+    #[test]
+    fn contextual_instructions() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&calls);
+        let prefix = String::from("Project: ");
+        let mut builder = McpServer::<NoTools, String>::builder();
+        builder
+            .instructions("replaced")
+            .instructions_with(move |context| {
+                counter.fetch_add(1, Ordering::SeqCst);
+                format!("{prefix}{context}")
+            });
+        assert!(
+            builder
+                .build()
+                .to_string()
+                .contains("[context-dependent instructions]")
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        for project in ["first", "second"] {
+            let result = advertised_configuration(builder.build(), &project.to_owned());
+            assert_eq!(result["instructions"], format!("Project: {project}"));
+        }
+        builder.instructions("fixed");
+        let result = advertised_configuration(builder.build(), &String::new());
+        assert_eq!(result["instructions"], "fixed");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
     }
 
     /// Sends configured metadata and enables the tool-list capability.
@@ -163,7 +241,7 @@ mod tests {
             .title("Test Server")
             .instructions("Use this server for testing.")
             .build();
-        let result = advertised_configuration(server);
+        let result = advertised_configuration(server, &());
         assert_eq!(
             result["serverInfo"],
             json!({"name": "test-server", "version": "1.2.3", "title": "Test Server"})

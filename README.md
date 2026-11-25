@@ -178,6 +178,15 @@ async fn handle(
 
 HTTP extracts context per POST request through Axum's `FromRequestParts<()>`. Stdio uses `io::FromStdio` once at startup. CLI uses `cli::FromCli` to add context options and extract their values, selected with `Tools::cli("tools").context::<Context>()`.
 
+Use `McpServer::<Tools, Context>::builder()` for a contextual MCP server. Its instructions can be generated from the initialization context:
+
+```rust,ignore
+let mut builder = McpServer::<Tools, Context>::builder();
+builder.instructions_with(|context| context.instructions.clone());
+```
+
+The callback replaces any static `.instructions(...)` text and runs only during initialization. The last setter wins; clients must reconnect to receive changed instructions. Sans-I/O callers pass context through `server.handle_with_context(&context, message)`; transports do this automatically. Tool definitions and native CLI help are unchanged.
+
 ## Testing
 
 To test your handler, construct it with test fixtures and call `handle` directly:

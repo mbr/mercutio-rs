@@ -47,7 +47,7 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 ///
 /// Stdout is locked for the duration of this call. Using [`println!`] or other stdout-locking
 /// macros inside the handler will deadlock.
-pub fn run_stdio<R, C, H, T, E>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub fn run_stdio<R, C, H, T, E>(server: McpServer<R, C>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
     C: FromStdio,
@@ -67,7 +67,7 @@ where
 pub fn run_on<R, C, H, T, E, I, O>(
     mut input: I,
     mut output: O,
-    mut server: McpServer<R>,
+    mut server: McpServer<R, C>,
     mut handler: H,
 ) -> Result<(), IoError>
 where
@@ -91,7 +91,7 @@ where
 
         let msg = crate::parse_line(line.trim_end()).map_err(IoError::Parse)?;
 
-        let response = match server.handle(msg) {
+        let response = match server.handle_with_context(&context, msg) {
             Output::Send(response) => response,
             Output::ToolCall { tool, responder } => {
                 responder.respond(handler(&context, None, tool))

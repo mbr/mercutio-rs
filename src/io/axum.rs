@@ -137,14 +137,14 @@ where
 /// Manages session lifecycle for the HTTP transport.
 ///
 /// Implementations handle session creation, access, and removal.
-pub trait SessionStorage<R: ToolRegistry>: Send + Sync + 'static {
+pub trait SessionStorage<R: ToolRegistry, C = ()>: Send + Sync + 'static {
     /// Error type for storage operations.
     type Error: std::fmt::Display + Send;
 
     /// Creates a new session with the given server, returning its ID.
     fn create(
         &self,
-        server: McpServer<R>,
+        server: McpServer<R, C>,
     ) -> impl Future<Output = Result<McpSessionId, Self::Error>> + Send;
 
     /// Calls a function with exclusive access to a session's server.
@@ -153,7 +153,7 @@ pub trait SessionStorage<R: ToolRegistry>: Send + Sync + 'static {
     fn with_session<T: Send>(
         &self,
         id: McpSessionId,
-        f: impl FnOnce(&mut McpServer<R>) -> T + Send,
+        f: impl FnOnce(&mut McpServer<R, C>) -> T + Send,
     ) -> impl Future<Output = Result<Option<T>, Self::Error>> + Send;
 
     /// Removes a session, returning `true` if it existed.
@@ -169,9 +169,9 @@ pub enum InMemoryStorageError {
 }
 
 /// Entry in the in-memory session storage.
-struct SessionEntry<R: ToolRegistry> {
+struct SessionEntry<R: ToolRegistry, C> {
     /// The MCP server instance for this session.
-    server: McpServer<R>,
+    server: McpServer<R, C>,
     /// When this session was last accessed.
     last_accessed: Instant,
 }
@@ -181,16 +181,16 @@ struct SessionEntry<R: ToolRegistry> {
 /// Stores sessions in memory with a configurable capacity limit. When full, evicts the
 /// least-recently-used session that is older than the minimum eviction age. If no sessions
 /// qualify for eviction, returns [`InMemoryStorageError::AtCapacity`].
-pub struct InMemoryStorage<R: ToolRegistry> {
+pub struct InMemoryStorage<R: ToolRegistry, C = ()> {
     /// Session entries keyed by session ID.
-    sessions: RwLock<HashMap<McpSessionId, SessionEntry<R>>>,
+    sessions: RwLock<HashMap<McpSessionId, SessionEntry<R, C>>>,
     /// Maximum number of sessions to store.
     capacity: usize,
     /// Minimum age before a session can be evicted.
     min_eviction_age: Duration,
 }
 
-impl<R: ToolRegistry> InMemoryStorage<R> {
+impl<R: ToolRegistry, C> InMemoryStorage<R, C> {
     /// Creates a new in-memory storage with the given capacity and minimum eviction age.
     ///
     /// Sessions younger than `min_eviction_age` will not be evicted even when at capacity,
@@ -204,10 +204,12 @@ impl<R: ToolRegistry> InMemoryStorage<R> {
     }
 }
 
-impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStorage<R> {
+impl<R: ToolRegistry + Send + Sync + 'static, C: 'static> SessionStorage<R, C>
+    for InMemoryStorage<R, C>
+{
     type Error = InMemoryStorageError;
 
-    async fn create(&self, server: McpServer<R>) -> Result<McpSessionId, Self::Error> {
+    async fn create(&self, server: McpServer<R, C>) -> Result<McpSessionId, Self::Error> {
         let id: McpSessionId = rand::rng().random();
         let now = Instant::now();
 
@@ -243,7 +245,7 @@ impl<R: ToolRegistry + Send + Sync + 'static> SessionStorage<R> for InMemoryStor
     async fn with_session<T: Send>(
         &self,
         id: McpSessionId,
-        f: impl FnOnce(&mut McpServer<R>) -> T + Send,
+        f: impl FnOnce(&mut McpServer<R, C>) -> T + Send,
     ) -> Result<Option<T>, Self::Error> {
         let mut sessions = self.sessions.write().expect("lock poisoned");
         let Some(entry) = sessions.get_mut(&id) else {
@@ -270,16 +272,16 @@ pub const DEFAULT_CAPACITY: usize = 10_000;
 pub const DEFAULT_MIN_EVICTION_AGE: Duration = Duration::from_secs(120);
 
 /// Shared state for axum handlers.
-struct AppState<R: ToolRegistry, H, S> {
+struct AppState<R: ToolRegistry, H, S, C> {
     /// Builder for creating new server instances.
-    builder: Arc<McpServerBuilder<R>>,
+    builder: Arc<McpServerBuilder<R, C>>,
     /// Session storage.
     storage: Arc<S>,
     /// Handler for tool invocations.
     handler: H,
 }
 
-impl<R: ToolRegistry, H: Clone, S> Clone for AppState<R, H, S> {
+impl<R: ToolRegistry, H: Clone, S, C> Clone for AppState<R, H, S, C> {
     fn clone(&self) -> Self {
         Self {
             builder: Arc::clone(&self.builder),
@@ -313,9 +315,9 @@ pub struct McpRouter;
 impl McpRouter {
     /// Creates a builder with the required server builder and handler.
     pub fn builder<R, H, C>(
-        builder: McpServerBuilder<R>,
+        builder: McpServerBuilder<R, C>,
         handler: H,
-    ) -> McpRouterBuilder<R, H, InMemoryStorage<R>, C>
+    ) -> McpRouterBuilder<R, H, InMemoryStorage<R, C>, C>
     where
         R: ToolRegistry + Send + Sync + 'static,
         H: ToolHandler<R, C> + Clone + 'static,
@@ -332,7 +334,7 @@ impl McpRouter {
 /// Builder for configuring an MCP router.
 pub struct McpRouterBuilder<R: ToolRegistry, H, S, C = ()> {
     /// Builder for creating new server instances.
-    builder: McpServerBuilder<R>,
+    builder: McpServerBuilder<R, C>,
     /// Handler for tool invocations.
     handler: H,
     /// Session storage.
@@ -345,10 +347,10 @@ impl<R, H, S, C> McpRouterBuilder<R, H, S, C>
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
-    S: SessionStorage<R>,
+    S: SessionStorage<R, C>,
 {
     /// Sets a custom session storage implementation.
-    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2, C> {
+    pub fn storage<S2: SessionStorage<R, C>>(self, storage: S2) -> McpRouterBuilder<R, H, S2, C> {
         McpRouterBuilder {
             builder: self.builder,
             handler: self.handler,
@@ -373,7 +375,7 @@ where
                 "/",
                 post(handle_post::<R, H, S, C>)
                     .get(handle_get)
-                    .delete(handle_delete::<R, H, S>),
+                    .delete(handle_delete::<R, H, S, C>),
             )
             .with_state(state)
     }
@@ -386,7 +388,7 @@ where
 ///
 /// Uses [`InMemoryStorage`] with [`DEFAULT_CAPACITY`] and [`DEFAULT_MIN_EVICTION_AGE`]. For
 /// custom storage, use [`McpRouter::builder`].
-pub fn mcp_router<R, H, C>(builder: McpServerBuilder<R>, handler: H) -> Router
+pub fn mcp_router<R, H, C>(builder: McpServerBuilder<R, C>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
@@ -397,7 +399,7 @@ where
 
 /// Handles POST requests (client messages).
 async fn handle_post<R, H, S, C>(
-    State(state): State<AppState<R, H, S>>,
+    State(state): State<AppState<R, H, S, C>>,
     OptionalSessionId(session_id): OptionalSessionId,
     RequestContext(context): RequestContext<C>,
     body: Bytes,
@@ -405,7 +407,7 @@ async fn handle_post<R, H, S, C>(
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
-    S: SessionStorage<R>,
+    S: SessionStorage<R, C>,
     C: FromRequestParts<()> + Send + Sync + 'static,
 {
     let body_str = match std::str::from_utf8(&body) {
@@ -446,7 +448,7 @@ async fn handle_get() -> Response {
 
 /// Handles a message for a session.
 async fn handle_session<R, H, S, C>(
-    state: &AppState<R, H, S>,
+    state: &AppState<R, H, S, C>,
     context: &C,
     session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
@@ -454,12 +456,14 @@ async fn handle_session<R, H, S, C>(
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
-    S: SessionStorage<R>,
+    S: SessionStorage<R, C>,
     C: Sync,
 {
     let output = match state
         .storage
-        .with_session(session_id, |server| server.handle(msg))
+        .with_session(session_id, |server| {
+            server.handle_with_context(context, msg)
+        })
         .await
     {
         Ok(Some(output)) => output,
@@ -514,14 +518,15 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Resp
 }
 
 /// Handles DELETE requests (session termination).
-async fn handle_delete<R, H, S>(
-    State(state): State<AppState<R, H, S>>,
+async fn handle_delete<R, H, S, C>(
+    State(state): State<AppState<R, H, S, C>>,
     session_id: McpSessionId,
 ) -> Response
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: Clone + Send + Sync + 'static,
-    S: SessionStorage<R>,
+    S: SessionStorage<R, C>,
+    C: 'static,
 {
     if state.storage.remove(session_id).await {
         StatusCode::NO_CONTENT.into_response()
