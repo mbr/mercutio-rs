@@ -185,8 +185,6 @@ let mut builder = McpServer::<Tools, Context>::builder();
 builder.instructions(|context| context.instructions.clone());
 ```
 
-For fixed text, use `.instructions(|_| "Instructions.".to_owned())`. The callback runs only during initialization; clients must reconnect to receive changed instructions. Sans-I/O callers pass context through `server.handle_with_context(&context, message)`; transports do this automatically. Tool definitions and native CLI help are unchanged.
-
 ## Testing
 
 To test your handler, construct it with test fixtures and call `handle` directly:
