@@ -37,7 +37,11 @@ impl Drop for CleanupMarker {
 }
 
 /// Shares handler behavior between synchronous and asynchronous child runners.
-fn handle(session: Option<McpSessionId>, input: Echo) -> Result<String, &'static str> {
+fn handle(
+    _context: &(),
+    session: Option<McpSessionId>,
+    input: Echo,
+) -> Result<String, &'static str> {
     assert!(session.is_none());
     if input.message == "fail" {
         Err("handler failed")
@@ -59,7 +63,7 @@ fn run_child(mode: &str) {
             let runtime = tokio::runtime::Builder::new_current_thread()
                 .build()
                 .expect("test runtime");
-            let mut handler = |session, input| async move { handle(session, input) };
+            let mut handler = |_: &(), session, input| async move { handle(&(), session, input) };
             runtime.block_on(cli.run_async_or_exit(&mut handler));
         }
         _ => panic!("unknown test runner"),

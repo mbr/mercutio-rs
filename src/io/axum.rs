@@ -20,7 +20,7 @@
 //! let mut builder = McpServer::<MyTools>::builder();
 //! builder.name("my-server").version("1.0.0");
 //!
-//! let router = mcp_router(builder, |_session_id, tool: MyTools| async move {
+//! let router = mcp_router(builder, |_context: &(), _session_id, tool: MyTools| async move {
 //!     match tool {
 //!         MyTools::GetWeather(input) => {
 //!             Ok::<_, Infallible>(format!("Weather in {}: sunny", input.city))
@@ -52,6 +52,7 @@
 use std::{
     collections::HashMap,
     future::Future,
+    marker::PhantomData,
     sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
@@ -269,22 +270,48 @@ pub const DEFAULT_CAPACITY: usize = 10_000;
 pub const DEFAULT_MIN_EVICTION_AGE: Duration = Duration::from_secs(120);
 
 /// Shared state for axum handlers.
-struct AppState<R: ToolRegistry, H: ToolHandler<R>, S: SessionStorage<R>> {
+struct AppState<R: ToolRegistry, H, S, A> {
     /// Builder for creating new server instances.
     builder: Arc<McpServerBuilder<R>>,
     /// Session storage.
     storage: Arc<S>,
     /// Handler for tool invocations.
     handler: H,
+    /// Application state supplied to request context extraction.
+    context_state: Arc<A>,
 }
 
-impl<R: ToolRegistry, H: ToolHandler<R> + Clone, S: SessionStorage<R>> Clone for AppState<R, H, S> {
+impl<R: ToolRegistry, H: Clone, S, A> Clone for AppState<R, H, S, A> {
     fn clone(&self) -> Self {
         Self {
             builder: Arc::clone(&self.builder),
             storage: Arc::clone(&self.storage),
             handler: self.handler.clone(),
+            context_state: Arc::clone(&self.context_state),
         }
+    }
+}
+
+/// Extracts context against application state, not private transport state.
+struct RequestContext<C>(C);
+
+impl<R, H, S, C, A> FromRequestParts<AppState<R, H, S, A>> for RequestContext<C>
+where
+    R: ToolRegistry + Send + Sync,
+    H: Send + Sync,
+    S: Send + Sync,
+    A: Send + Sync,
+    C: FromRequestParts<A> + Send,
+{
+    type Rejection = C::Rejection;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState<R, H, S, A>,
+    ) -> Result<Self, Self::Rejection> {
+        C::from_request_parts(parts, &state.context_state)
+            .await
+            .map(Self)
     }
 }
 
@@ -296,61 +323,85 @@ pub struct McpRouter;
 
 impl McpRouter {
     /// Creates a builder with the required server builder and handler.
-    pub fn builder<R, H>(
+    pub fn builder<R, H, C>(
         builder: McpServerBuilder<R>,
         handler: H,
-    ) -> McpRouterBuilder<R, H, InMemoryStorage<R>>
+    ) -> McpRouterBuilder<R, H, InMemoryStorage<R>, C>
     where
         R: ToolRegistry + Send + Sync + 'static,
-        H: ToolHandler<R> + Clone + Send + Sync + 'static,
+        H: ToolHandler<R, C> + Clone + 'static,
     {
         McpRouterBuilder {
             builder,
             handler,
             storage: InMemoryStorage::new(DEFAULT_CAPACITY, DEFAULT_MIN_EVICTION_AGE),
+            context_state: (),
+            context: PhantomData,
         }
     }
 }
 
 /// Builder for configuring an MCP router.
-pub struct McpRouterBuilder<R: ToolRegistry, H, S> {
+pub struct McpRouterBuilder<R: ToolRegistry, H, S, C = (), A = ()> {
     /// Builder for creating new server instances.
     builder: McpServerBuilder<R>,
     /// Handler for tool invocations.
     handler: H,
     /// Session storage.
     storage: S,
+    /// Application state supplied to request context extraction.
+    context_state: A,
+    /// Request context type, never retained as session state.
+    context: PhantomData<fn() -> C>,
 }
 
-impl<R, H, S> McpRouterBuilder<R, H, S>
+impl<R, H, S, C, A> McpRouterBuilder<R, H, S, C, A>
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
 {
     /// Sets a custom session storage implementation.
-    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2> {
+    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2, C, A> {
         McpRouterBuilder {
             builder: self.builder,
             handler: self.handler,
             storage,
+            context_state: self.context_state,
+            context: PhantomData,
         }
     }
 
-    /// Builds the axum [`Router`].
-    pub fn build(self) -> Router {
+    /// Supplies application state for [`FromRequestParts`] context extraction.
+    pub fn context_state<A2>(self, state: A2) -> McpRouterBuilder<R, H, S, C, A2> {
+        McpRouterBuilder {
+            builder: self.builder,
+            handler: self.handler,
+            storage: self.storage,
+            context_state: state,
+            context: PhantomData,
+        }
+    }
+
+    /// Builds the router, extracting context for each POST and DELETE.
+    pub fn build(self) -> Router
+    where
+        C: FromRequestParts<A> + Send + Sync + 'static,
+        A: Send + Sync + 'static,
+    {
         let state = AppState {
             builder: Arc::new(self.builder),
             storage: Arc::new(self.storage),
             handler: self.handler,
+            context_state: Arc::new(self.context_state),
         };
 
         Router::new()
             .route(
                 "/",
-                post(handle_post::<R, H, S>)
+                post(handle_post::<R, H, S, C, A>)
                     .get(handle_get)
-                    .delete(handle_delete::<R, H, S>),
+                    .delete(handle_delete::<R, H, S, C, A>),
             )
             .with_state(state)
     }
@@ -363,24 +414,28 @@ where
 ///
 /// Uses [`InMemoryStorage`] with [`DEFAULT_CAPACITY`] and [`DEFAULT_MIN_EVICTION_AGE`]. For
 /// custom storage, use [`McpRouter::builder`].
-pub fn mcp_router<R, H>(builder: McpServerBuilder<R>, handler: H) -> Router
+pub fn mcp_router<R, H, C>(builder: McpServerBuilder<R>, handler: H) -> Router
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    H: ToolHandler<R, C> + Clone + 'static,
+    C: FromRequestParts<()> + Send + Sync + 'static,
 {
     McpRouter::builder(builder, handler).build()
 }
 
 /// Handles POST requests (client messages).
-async fn handle_post<R, H, S>(
-    State(state): State<AppState<R, H, S>>,
+async fn handle_post<R, H, S, C, A>(
+    State(state): State<AppState<R, H, S, A>>,
     OptionalSessionId(session_id): OptionalSessionId,
+    RequestContext(context): RequestContext<C>,
     body: Bytes,
 ) -> Response
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
+    C: FromRequestParts<A> + Send + Sync + 'static,
+    A: Send + Sync + 'static,
 {
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s,
@@ -408,7 +463,7 @@ where
         },
     };
 
-    handle_session(&state, session_id, msg).await
+    handle_session(&state, &context, session_id, msg).await
 }
 
 /// Handles GET requests (SSE streams).
@@ -419,15 +474,18 @@ async fn handle_get() -> Response {
 }
 
 /// Handles a message for a session.
-async fn handle_session<R, H, S>(
-    state: &AppState<R, H, S>,
+async fn handle_session<R, H, S, C, A>(
+    state: &AppState<R, H, S, A>,
+    context: &C,
     session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
 ) -> Response
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
+    C: Sync,
+    A: Send + Sync,
 {
     let output = match state
         .storage
@@ -448,7 +506,7 @@ where
     match output {
         Output::Send(msg) => json_response(&msg, session_id),
         Output::ToolCall { tool, responder } => {
-            let result = state.handler.handle(Some(session_id), tool).await;
+            let result = state.handler.handle(context, Some(session_id), tool).await;
             json_response(&responder.respond(result), session_id)
         }
         Output::None => StatusCode::ACCEPTED.into_response(),
@@ -486,14 +544,17 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Resp
 }
 
 /// Handles DELETE requests (session termination).
-async fn handle_delete<R, H, S>(
-    State(state): State<AppState<R, H, S>>,
+async fn handle_delete<R, H, S, C, A>(
+    State(state): State<AppState<R, H, S, A>>,
     session_id: McpSessionId,
+    RequestContext(_context): RequestContext<C>,
 ) -> Response
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R> + Clone + Send + Sync + 'static,
+    H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
+    C: FromRequestParts<A> + Send + Sync + 'static,
+    A: Send + Sync + 'static,
 {
     if state.storage.remove(session_id).await {
         StatusCode::NO_CONTENT.into_response()
@@ -551,7 +612,7 @@ mod tests {
     fn test_router() -> Router {
         mcp_router(
             McpServer::builder(),
-            |session: Option<McpSessionId>, input: Echo| async move {
+            |_context: &(), session: Option<McpSessionId>, input: Echo| async move {
                 Ok::<_, Infallible>(format!(
                     "{}: {}",
                     session.expect("HTTP session"),

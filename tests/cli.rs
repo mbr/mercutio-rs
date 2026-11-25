@@ -633,7 +633,7 @@ fn nested_dispatch_and_empty_registries() {
                 Cursor::new(input),
             )
             .expect("nested invocation");
-        let (tool, options) = invocation.into_parts();
+        let (tool, (), options) = invocation.into_parts();
         let TestTools::Search(input) = tool else {
             panic!("expected search tool");
         };
@@ -672,7 +672,7 @@ fn help_and_version_are_stdout_control_flow() {
                 UnreadableInput,
                 &mut stdout,
                 &mut stderr,
-                |_, _| -> Result<&str, &str> { panic!("help must not invoke the handler") },
+                |_, _, _| -> Result<&str, &str> { panic!("help must not invoke the handler") },
             )
             .expect_err("display request");
         assert_eq!(error.kind(), CliErrorKind::Display);
@@ -710,7 +710,7 @@ fn synchronous_runner_emits_structured_and_raw_json() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |session, _tool| -> Result<ToolOutput, &str> {
+            |_, session, _tool| -> Result<ToolOutput, &str> {
                 assert!(session.is_none());
                 Ok(ToolOutput::new()
                     .text("fallback")
@@ -732,7 +732,7 @@ fn synchronous_runner_emits_structured_and_raw_json() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<ToolOutput, &str> {
+            |_, _, _| -> Result<ToolOutput, &str> {
                 Ok(ToolOutput::new()
                     .text("fallback")
                     .structured(&serde_json::json!({"count": 2})))
@@ -756,7 +756,7 @@ fn structured_and_handler_failures_write_no_stdout() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<&str, &str> { Ok("text only") },
+            |_, _, _| -> Result<&str, &str> { Ok("text only") },
         )
         .expect_err("missing structured content");
     assert_eq!(missing.exit_code(), 1);
@@ -768,7 +768,7 @@ fn structured_and_handler_failures_write_no_stdout() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<&str, &str> { Err("domain failure") },
+            |_, _, _| -> Result<&str, &str> { Err("domain failure") },
         )
         .expect_err("handler error");
     assert_eq!(handler.kind(), CliErrorKind::Runtime);
@@ -786,7 +786,7 @@ fn binary_output_separates_bytes_and_text() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<ToolOutput, &str> {
+            |_, _, _| -> Result<ToolOutput, &str> {
                 Ok(ToolOutput::new()
                     .text("generated image")
                     .image(b"\x89PNG\r\n", "image/png"))
@@ -810,7 +810,7 @@ fn binary_output_separates_bytes_and_text() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<ToolOutput, &str> { Ok(ToolOutput::new().content(invalid)) },
+            |_, _, _| -> Result<ToolOutput, &str> { Ok(ToolOutput::new().content(invalid)) },
         )
         .expect_err("invalid base64");
     assert_eq!(error.exit_code(), 1);
@@ -839,7 +839,7 @@ fn binary_output_rejects_zero_or_multiple_blocks_without_writing() {
                 Cursor::new(Vec::new()),
                 &mut stdout,
                 &mut stderr,
-                |_, _| -> Result<ToolOutput, &str> { Ok(output) },
+                |_, _, _| -> Result<ToolOutput, &str> { Ok(output) },
             )
             .expect_err("binary output requires exactly one block");
         assert_eq!(error.exit_code(), 1);
@@ -874,7 +874,7 @@ fn artifact_output_creates_private_unique_files_and_forced_kitty() {
             Cursor::new(Vec::new()),
             &mut stdout,
             &mut stderr,
-            |_, _| -> Result<ToolOutput, &str> {
+            |_, _, _| -> Result<ToolOutput, &str> {
                 Ok(ToolOutput::new()
                     .text("summary")
                     .image(b"png", "image/png")
@@ -967,7 +967,7 @@ fn artifact_output_resolves_new_parents_without_inline_images() {
                 Cursor::new(Vec::new()),
                 &mut stdout,
                 &mut stderr,
-                |_, _| -> Result<ToolOutput, &str> {
+                |_, _, _| -> Result<ToolOutput, &str> {
                     Ok(ToolOutput::new().image(b"png", "image/png"))
                 },
             )
@@ -1007,7 +1007,7 @@ fn text_only_artifacts_create_no_directory() {
             Cursor::new(Vec::new()),
             &mut stdout,
             Vec::new(),
-            |_, _| -> Result<&str, &str> { Ok("plain text") },
+            |_, _, _| -> Result<&str, &str> { Ok("plain text") },
         )
         .expect("text artifact output");
     assert_eq!(stdout, b"plain text\n");
@@ -1049,7 +1049,9 @@ fn artifacts_survive_final_stdout_failure() {
             Cursor::new(Vec::new()),
             FailingWriter,
             Vec::new(),
-            |_, _| -> Result<ToolOutput, &str> { Ok(ToolOutput::new().image(b"png", "image/png")) },
+            |_, _, _| -> Result<ToolOutput, &str> {
+                Ok(ToolOutput::new().image(b"png", "image/png"))
+            },
         )
         .expect_err("stdout failure");
     assert_eq!(error.exit_code(), 1);
@@ -1097,7 +1099,7 @@ fn native_and_mcp_paths_invoke_the_same_behavior() {
             Cursor::new(Vec::new()),
             &mut cli_output,
             Vec::new(),
-            |_, tool| Ok::<_, &str>(search_behavior(tool)),
+            |_, _, tool| Ok::<_, &str>(search_behavior(tool)),
         )
         .expect("native tool call");
     assert_eq!(mcp_output.as_text(), Some("handled rust"));
@@ -1108,7 +1110,7 @@ fn native_and_mcp_paths_invoke_the_same_behavior() {
 async fn asynchronous_runner_invokes_mut_handler() {
     let mut stdout = Vec::new();
     let mut stderr = Vec::new();
-    let mut handler = |session: Option<mercutio::io::McpSessionId>, _tool: TestTools| async move {
+    let mut handler = |_: &(), session: Option<mercutio::io::McpSessionId>, _tool: TestTools| async move {
         assert!(session.is_none());
         Ok::<_, &str>("async output")
     };

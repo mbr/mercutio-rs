@@ -14,68 +14,99 @@
 
 mod session_id;
 
-use std::future::Future;
+use std::{convert::Infallible, error::Error as StdError, future::Future};
 
 use thiserror::Error;
 
 pub use self::session_id::{HTTP_SESSION_ID_HEADER, McpSessionId, ParseSessionIdError};
 use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 
-/// Handles tool invocations in concurrent contexts.
+/// Extracts application context once before processing a stdio stream.
 ///
-/// Blanket impl for `Fn(Option<McpSessionId>, R) -> impl Future<Output = Result<T, E>>`.
-pub trait ToolHandler<R: ToolRegistry>: Send + Sync {
+/// May read configuration, but must not consume stdin or write stdout.
+/// Use `run_on_with_context` to supply an already constructed context instead.
+pub trait FromStdio: Sized {
+    /// Error returned when startup context cannot be constructed.
+    type Error: StdError + Send + Sync + 'static;
+
+    /// Constructs context for this stdio invocation.
+    fn from_stdio() -> Result<Self, Self::Error>;
+}
+
+impl FromStdio for () {
+    type Error = Infallible;
+
+    fn from_stdio() -> Result<Self, Self::Error> {
+        Ok(())
+    }
+}
+
+/// Handles tool invocations with explicit application context.
+///
+/// Closures receive `(&C, Option<McpSessionId>, R)` and return a result future.
+/// Copy or clone borrowed context data before returning an async block;
+/// implementations of this trait can borrow context across awaits directly.
+pub trait ToolHandler<R: ToolRegistry, C = ()>: Send + Sync {
     /// Error type returned by the handler.
     type Error: std::fmt::Display;
 
     /// Handles a tool invocation and returns the result.
     fn handle(
         &self,
+        context: &C,
         session_id: Option<McpSessionId>,
         tool: R,
     ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
 }
 
-impl<R, F, Fut, T, E> ToolHandler<R> for F
+impl<R, C, F, Fut, T, E> ToolHandler<R, C> for F
 where
     R: ToolRegistry + Send,
-    F: Fn(Option<McpSessionId>, R) -> Fut + Send + Sync,
+    C: Sync,
+    F: Fn(&C, Option<McpSessionId>, R) -> Fut + Send + Sync,
     Fut: Future<Output = Result<T, E>> + Send,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
 {
     type Error = E;
 
-    async fn handle(&self, session_id: Option<McpSessionId>, tool: R) -> Result<ToolOutput, E> {
-        self(session_id, tool).await.map(Into::into)
+    async fn handle(
+        &self,
+        context: &C,
+        session_id: Option<McpSessionId>,
+        tool: R,
+    ) -> Result<ToolOutput, E> {
+        self(context, session_id, tool).await.map(Into::into)
     }
 }
 
 /// Handles tool invocations in exclusive-access contexts.
 ///
 /// Every [`ToolHandler`] is automatically a `MutToolHandler` via blanket impl.
-pub trait MutToolHandler<R: ToolRegistry> {
+pub trait MutToolHandler<R: ToolRegistry, C = ()> {
     /// Error type returned by the handler.
     type Error: std::fmt::Display;
 
     /// Handles a tool invocation and returns the result.
     fn handle(
         &mut self,
+        context: &C,
         session_id: Option<McpSessionId>,
         tool: R,
     ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send;
 }
 
 /// Every [`ToolHandler`] is automatically a [`MutToolHandler`].
-impl<R: ToolRegistry, T: ToolHandler<R>> MutToolHandler<R> for T {
-    type Error = <T as ToolHandler<R>>::Error;
+impl<R: ToolRegistry, C, T: ToolHandler<R, C>> MutToolHandler<R, C> for T {
+    type Error = <T as ToolHandler<R, C>>::Error;
 
     fn handle(
         &mut self,
+        context: &C,
         session_id: Option<McpSessionId>,
         tool: R,
     ) -> impl Future<Output = Result<ToolOutput, Self::Error>> + Send {
-        ToolHandler::handle(self, session_id, tool)
+        ToolHandler::handle(self, context, session_id, tool)
     }
 }
 
@@ -94,6 +125,10 @@ pub mod axum;
 /// Errors from I/O transports.
 #[derive(Debug, Error)]
 pub enum IoError {
+    /// Application context could not be extracted before processing input.
+    #[error("failed to extract stdio context")]
+    Context(#[source] Box<dyn StdError + Send + Sync>),
+
     /// I/O operation failed.
     #[error("IO error")]
     Io(#[source] std::io::Error),

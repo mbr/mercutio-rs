@@ -47,7 +47,11 @@ fn cases() -> [(&'static str, Expected); 3] {
 }
 
 /// Requires stdio's session-free handler context and exercises domain errors.
-fn handle(session: Option<McpSessionId>, tool: TestTools) -> Result<String, &'static str> {
+fn handle(
+    _context: &(),
+    session: Option<McpSessionId>,
+    tool: TestTools,
+) -> Result<String, &'static str> {
     assert!(session.is_none());
     match tool {
         TestTools::Echo(input) => Ok(input.value),
@@ -118,7 +122,7 @@ async fn asynchronous_stdio_contract() {
             Cursor::new(input),
             &mut output,
             McpServer::builder().build(),
-            |session, tool| async move { handle(session, tool) },
+            |_: &(), session, tool| async move { handle(&(), session, tool) },
         )
         .await;
         assert_output(expected, result, &output);

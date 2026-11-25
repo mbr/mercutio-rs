@@ -24,6 +24,7 @@
 //!
 //!     async fn handle(
 //!         &mut self,
+//!         _context: &(),
 //!         _session_id: Option<mercutio::io::McpSessionId>,
 //!         tool: MyTools,
 //!     ) -> Result<ToolOutput, Self::Error> {
@@ -49,6 +50,7 @@
 
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
+use super::FromStdio;
 pub use super::{IoError, MutToolHandler, ToolHandler};
 use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 
@@ -67,10 +69,11 @@ use crate::{McpServer, OutgoingMessage, Output, ToolRegistry};
 ///
 /// Partially cancellation-safe. If cancelled mid-write, the client may receive a truncated
 /// response.
-pub async fn run_stdio<R, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub async fn run_stdio<R, C, H>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: MutToolHandler<R>,
+    C: FromStdio,
+    H: MutToolHandler<R, C>,
 {
     let stdin = BufReader::new(tokio::io::stdin());
     let stdout = tokio::io::stdout();
@@ -81,15 +84,34 @@ where
 ///
 /// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
 /// custom transports or testing.
-pub async fn run_on<R, H, I, O>(
+pub async fn run_on<R, C, H, I, O>(
+    input: I,
+    output: O,
+    server: McpServer<R>,
+    handler: H,
+) -> Result<(), IoError>
+where
+    R: ToolRegistry,
+    C: FromStdio,
+    H: MutToolHandler<R, C>,
+    I: AsyncBufReadExt + Unpin,
+    O: AsyncWriteExt + Unpin,
+{
+    let context = C::from_stdio().map_err(|error| IoError::Context(Box::new(error)))?;
+    run_on_with_context(input, output, server, &context, handler).await
+}
+
+/// Runs on caller-owned streams with explicitly supplied context.
+pub async fn run_on_with_context<R, C, H, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
+    context: &C,
     mut handler: H,
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
-    H: MutToolHandler<R>,
+    H: MutToolHandler<R, C>,
     I: AsyncBufReadExt + Unpin,
     O: AsyncWriteExt + Unpin,
 {
@@ -107,7 +129,7 @@ where
         let response = match server.handle(msg) {
             Output::Send(response) => response,
             Output::ToolCall { tool, responder } => {
-                responder.respond(handler.handle(None, tool).await)
+                responder.respond(handler.handle(context, None, tool).await)
             }
             Output::ProtocolError(error) => return Err(IoError::Protocol(error)),
             Output::None => continue,

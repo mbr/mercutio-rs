@@ -1,6 +1,6 @@
 # mercutio
 
-A Rust library for building [MCP](https://modelcontextprotocol.io/) servers. In MCP, *clients* are LLM host applications (IDEs, chat interfaces) that connect to *servers* to give models access to tools. `mercutio` handles the server-side protocol (parsing messages, managing the initialization handshake, dispatching tool calls), while you handle the transport. The core is a pure state machine: feed it JSON-RPC messages, and it returns what to send back.
+A Rust library for building [MCP](https://modelcontextprotocol.io/) servers. In MCP, _clients_ are LLM host applications (IDEs, chat interfaces) that connect to _servers_ to give models access to tools. `mercutio` handles the server-side protocol (parsing messages, managing the initialization handshake, dispatching tool calls), while you handle the transport. The core is a pure state machine: feed it JSON-RPC messages, and it returns what to send back.
 
 This [sans-io](https://www.firezone.dev/blog/sans-io) design means you can run it over stdio, HTTP, WebSockets, or anything else without fighting the library.
 
@@ -110,6 +110,7 @@ impl ToolHandler<MyTools> for MyHandler {
 
     async fn handle(
         &self,
+        _context: &(),
         _session_id: Option<McpSessionId>,
         tool: MyTools,
     ) -> Result<ToolOutput, Self::Error> {
@@ -125,7 +126,7 @@ impl ToolHandler<MyTools> for MyHandler {
 }
 ```
 
-`ToolHandler` takes `&self` for concurrent contexts; `MutToolHandler` takes `&mut self` for exclusive access. The session ID is `Some` for HTTP (multiple clients share one server), `None` for stdio (one process = one session). Closures work via blanket impl: `|_session_id, tool| async move { ... }`.
+`ToolHandler` takes `&self` for concurrent contexts; `MutToolHandler` takes `&mut self` for exclusive access. The session ID is `Some` for HTTP (multiple clients share one server), `None` for stdio (one process = one session). The additional context argument defaults to `&()`. Closures work via blanket impl: `|_context: &(), _session_id, tool| async move { ... }`.
 
 ### io-tokio
 
@@ -142,7 +143,7 @@ Synchronous stdin/stdout (no async runtime):
 
 ```rust,ignore
 let server = McpServer::<MyTools>::builder().name("my-server").version("1.0").build();
-mercutio::io::stdlib::run_stdio(server, |_session_id, tool| handle_tool(tool))?;
+mercutio::io::stdlib::run_stdio(server, |_context: &(), _session_id, tool| handle_tool(tool))?;
 ```
 
 ### io-axum
@@ -158,6 +159,61 @@ let app = axum::Router::new().nest("/mcp", router);
 ```
 
 For custom session storage, use `McpRouter::builder()` with `.storage()`.
+
+## Application context
+
+Implement `ToolHandler<Tools, Context>` (or `MutToolHandler<Tools, Context>`) to receive
+application-defined context separately from the handler's long-lived state:
+
+```rust,ignore
+async fn handle(
+    &self,
+    context: &Context,
+    session: Option<McpSessionId>,
+    tool: Tools,
+) -> Result<ToolOutput, Self::Error> {
+    self.execute(context, session, tool).await
+}
+```
+
+Context is borrowed for execution and need not implement `Clone`. Trait implementations can
+borrow it across awaits; closure adapters should copy or clone needed data before creating an
+`async move` block. The protocol core and static registry remain independent of context:
+context does not currently alter tool discovery, parsing, or server instructions. Applications
+must enforce their own scope and policy in the handler; extraction alone is not authorization.
+
+**HTTP:** Implement Axum's `FromRequestParts<S>` for your context, using query parameters,
+headers, extensions, or application state. `mcp_router` uses `S = ()`; for application state use:
+
+```rust,ignore
+let router = mercutio::io::axum::McpRouter::builder(builder, handler)
+    .context_state(application_state)
+    .build();
+```
+
+The extractor receives your application state, not private router state. It runs on every POST
+and DELETE, before session processing. Rejections are ordinary Axum responses. Context is never
+saved in the MCP session: for example, `?project=marc%2Fgeneral` must be supplied on each request
+when your extractor requires it. Different clients and concurrent calls cannot inherit a prior
+request's context.
+
+**Stdio:** Implement `io::FromStdio` to construct context synchronously once at startup, usually
+from configuration. Both stdio transports reuse that value for the stream's lifetime and return
+`IoError::Context` on extraction failure without reading input. For async setup or caller-owned
+context, use `run_on_with_context(input, output, server, &context, handler)` instead. Extractors
+must not read stdin or write stdout.
+
+**CLI:** Implement `cli::FromCli`: `augment_command` adds context options to the generated root
+command, and `from_cli` extracts context from its `ArgMatches`. Select it with
+`Tools::cli("tools").context::<Context>().build()?`. Extraction runs once for a successfully
+parsed invocation, including the whole-input JSON route, but not for help or version requests.
+Extraction errors are usage errors and prevent dispatch. For nested commands, use
+`try_parse_matches` on the generated subtree. Parse-only callers can access `Invocation::context`
+or obtain `(tool, context, output_options)` from `into_parts()`.
+
+Context-free applications use `()`, which implements both extraction traits and Axum's
+extractor. Existing handlers and runner closures must add the first `&()` argument; direct
+handler calls become `handler.handle(&(), session, tool)`.
 
 ## Testing
 
@@ -179,7 +235,7 @@ struct Handler;
 impl ToolHandler<Tools> for Handler {
     type Error = std::convert::Infallible;
 
-    async fn handle(&self, _: Option<mercutio::io::McpSessionId>, tool: Tools) -> Result<ToolOutput, Self::Error> {
+    async fn handle(&self, _: &(), _: Option<mercutio::io::McpSessionId>, tool: Tools) -> Result<ToolOutput, Self::Error> {
         match tool {
             Tools::Greet(g) => Ok(format!("Hello, {}!", g.name).into()),
         }
@@ -191,7 +247,7 @@ impl ToolHandler<Tools> for Handler {
 let handler = Handler;
 let tool = Tools::Greet(Greet { name: "Alice".into() });
 
-let output = handler.handle(None, tool).await.expect("handler failed");
+let output = handler.handle(&(), None, tool).await.expect("handler failed");
 assert_eq!(output.as_text(), Some("Hello, Alice!"));
 
 // Tool outputs are text blocks that can grow large; insta snapshots help manage them:
@@ -233,7 +289,7 @@ struct MyHandler;
 impl ToolHandler<MyTools> for MyHandler {
     type Error = std::convert::Infallible;
 
-    async fn handle(&self, _: Option<McpSessionId>, tool: MyTools) -> Result<ToolOutput, Self::Error> {
+    async fn handle(&self, _: &(), _: Option<McpSessionId>, tool: MyTools) -> Result<ToolOutput, Self::Error> {
         match tool {
             MyTools::Greet(input) => Ok(format!("Hello, {}!", input.name).into()),
         }
@@ -274,11 +330,11 @@ async fn main() -> anyhow::Result<()> {
 
 ## Feature Flags
 
-| Feature | Description |
-|---------|-------------|
-| `cli` | Native schema-driven command-line interface |
-| `io-stdlib` | Synchronous stdin/stdout transport |
-| `io-tokio` | Async stdin/stdout transport (Tokio) |
-| `io-axum` | HTTP transport (Axum) with session management |
-| `jiff` | `Rfc3339` timestamp type using jiff (mutually exclusive with `chrono`) |
-| `chrono` | `Rfc3339` timestamp type using chrono (mutually exclusive with `jiff`) |
+| Feature     | Description                                                            |
+| ----------- | ---------------------------------------------------------------------- |
+| `cli`       | Native schema-driven command-line interface                            |
+| `io-stdlib` | Synchronous stdin/stdout transport                                     |
+| `io-tokio`  | Async stdin/stdout transport (Tokio)                                   |
+| `io-axum`   | HTTP transport (Axum) with session management                          |
+| `jiff`      | `Rfc3339` timestamp type using jiff (mutually exclusive with `chrono`) |
+| `chrono`    | `Rfc3339` timestamp type using chrono (mutually exclusive with `jiff`) |

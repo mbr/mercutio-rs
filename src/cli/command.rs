@@ -13,9 +13,9 @@ use super::{
 use crate::ToolRegistry;
 
 /// Generates the root command and its typed tool subcommands.
-pub(super) fn root_command<R: ToolRegistry>(
+pub(super) fn root_command<R: ToolRegistry, C>(
     name: String,
-    builder: CliBuilder<R>,
+    builder: CliBuilder<R, C>,
     tools: &[ToolSpec],
 ) -> Command {
     let about = builder.about.filter(|text| !text.trim().is_empty());

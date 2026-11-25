@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::{
-    Cli, CliError, OutputOptions,
+    Cli, CliError, FromCli, OutputOptions,
     output::{kitty_terminal, render_output},
 };
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     io::{McpSessionId, MutToolHandler},
 };
 
-impl<R: ToolRegistry> Cli<R> {
+impl<R: ToolRegistry, C: FromCli> Cli<R, C> {
     /// Runs a synchronous handler, exiting after help or errors.
     ///
     /// Returns normally on success. Prints help and version to stdout before
@@ -24,7 +24,7 @@ impl<R: ToolRegistry> Cli<R> {
     /// Exiting skips destructors; use [`Self::run`] to retain control and cleanup.
     pub fn run_or_exit<H, T, E>(&self, handler: H)
     where
-        H: FnOnce(Option<McpSessionId>, R) -> Result<T, E>,
+        H: FnOnce(&C, Option<McpSessionId>, R) -> Result<T, E>,
         T: Into<ToolOutput>,
         E: fmt::Display,
     {
@@ -38,12 +38,12 @@ impl<R: ToolRegistry> Cli<R> {
     /// external services.
     pub fn run<H, T, E>(&self, handler: H) -> Result<(), CliError>
     where
-        H: FnOnce(Option<McpSessionId>, R) -> Result<T, E>,
+        H: FnOnce(&C, Option<McpSessionId>, R) -> Result<T, E>,
         T: Into<ToolOutput>,
         E: fmt::Display,
     {
-        let (tool, options) = self.try_parse()?.into_parts();
-        render_process_result(&options, handler(None, tool))
+        let (tool, context, options) = self.try_parse()?.into_parts();
+        render_process_result(&options, handler(&context, None, tool))
     }
 
     /// Parses explicit arguments, invokes a synchronous handler, and renders to injected streams.
@@ -63,12 +63,18 @@ impl<R: ToolRegistry> Cli<R> {
         S: Read,
         O: Write,
         D: Write,
-        H: FnOnce(Option<McpSessionId>, R) -> Result<T, E>,
+        H: FnOnce(&C, Option<McpSessionId>, R) -> Result<T, E>,
         T: Into<ToolOutput>,
         E: fmt::Display,
     {
-        let (tool, options) = self.try_parse_from(args, input)?.into_parts();
-        render_result(&options, handler(None, tool), stdout, stderr, false)
+        let (tool, context, options) = self.try_parse_from(args, input)?.into_parts();
+        render_result(
+            &options,
+            handler(&context, None, tool),
+            stdout,
+            stderr,
+            false,
+        )
     }
 
     /// Runs an async handler, exiting after help or errors.
@@ -77,7 +83,7 @@ impl<R: ToolRegistry> Cli<R> {
     /// normally on success. Use [`Self::run_async`] to retain control and cleanup.
     pub async fn run_async_or_exit<H>(&self, handler: &mut H)
     where
-        H: MutToolHandler<R>,
+        H: MutToolHandler<R, C>,
     {
         exit_on_error(self.run_async(handler).await);
     }
@@ -89,10 +95,10 @@ impl<R: ToolRegistry> Cli<R> {
     /// before constructing a handler for custom dispatch and rendering.
     pub async fn run_async<H>(&self, handler: &mut H) -> Result<(), CliError>
     where
-        H: MutToolHandler<R>,
+        H: MutToolHandler<R, C>,
     {
-        let (tool, options) = self.try_parse()?.into_parts();
-        render_process_result(&options, handler.handle(None, tool).await)
+        let (tool, context, options) = self.try_parse()?.into_parts();
+        render_process_result(&options, handler.handle(&context, None, tool).await)
     }
 
     /// Parses explicit arguments, invokes an async handler, and renders to injected streams.
@@ -112,10 +118,10 @@ impl<R: ToolRegistry> Cli<R> {
         S: Read,
         O: Write,
         D: Write,
-        H: MutToolHandler<R>,
+        H: MutToolHandler<R, C>,
     {
-        let (tool, options) = self.try_parse_from(args, input)?.into_parts();
-        let result = handler.handle(None, tool).await;
+        let (tool, context, options) = self.try_parse_from(args, input)?.into_parts();
+        let result = handler.handle(&context, None, tool).await;
         render_result(&options, result, stdout, stderr, false)
     }
 }

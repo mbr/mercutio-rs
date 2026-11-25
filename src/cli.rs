@@ -11,6 +11,8 @@ mod schema;
 
 use std::{
     collections::BTreeMap,
+    convert::Infallible,
+    error::Error as StdError,
     ffi::OsString,
     fmt,
     io::{self, Read, Write},
@@ -27,6 +29,31 @@ use self::{
     schema::{ToolSpec, analyze_tool, append_collisions, normalize_name},
 };
 use crate::ToolRegistry;
+
+/// Extracts application context from a native CLI invocation.
+///
+/// Context options belong to the root command, separate from tool arguments.
+/// Extracts after successful tool parsing, not for help or version requests.
+pub trait FromCli: Sized {
+    /// Error returned when invocation context cannot be constructed.
+    type Error: StdError + Send + Sync + 'static;
+
+    /// Adds application context options to the generated root command.
+    fn augment_command(command: Command) -> Command {
+        command
+    }
+
+    /// Constructs context from matches rooted at the generated command.
+    fn from_cli(matches: &ArgMatches) -> Result<Self, Self::Error>;
+}
+
+impl FromCli for () {
+    type Error = Infallible;
+
+    fn from_cli(_matches: &ArgMatches) -> Result<Self, Self::Error> {
+        Ok(())
+    }
+}
 
 /// Controls the successful result representation written by a runner.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -66,22 +93,29 @@ pub struct OutputOptions {
 }
 
 /// One parsed native tool invocation.
-pub struct Invocation<R: ToolRegistry> {
+pub struct Invocation<R: ToolRegistry, C = ()> {
     /// Parsed registry value.
     tool: R,
+    /// Application context extracted for this invocation.
+    context: C,
     /// Selected output settings.
     output: OutputOptions,
 }
 
-impl<R: ToolRegistry> Invocation<R> {
-    /// Consumes the invocation and returns its parsed tool.
+impl<R: ToolRegistry, C> Invocation<R, C> {
+    /// Returns the tool, discarding context and output settings.
     pub fn into_tool(self) -> R {
         self.tool
     }
 
-    /// Consumes the invocation and returns its tool and output settings.
-    pub fn into_parts(self) -> (R, OutputOptions) {
-        (self.tool, self.output)
+    /// Consumes the invocation and returns its tool, context, and output settings.
+    pub fn into_parts(self) -> (R, C, OutputOptions) {
+        (self.tool, self.context, self.output)
+    }
+
+    /// Returns the application context extracted for this invocation.
+    pub fn context(&self) -> &C {
+        &self.context
     }
 
     /// Returns the selected output settings.
@@ -253,7 +287,7 @@ impl CliError {
 }
 
 /// Builder for a generated native CLI.
-pub struct CliBuilder<R: ToolRegistry> {
+pub struct CliBuilder<R: ToolRegistry, C = ()> {
     /// Root command name.
     name: String,
     /// Optional root version.
@@ -262,11 +296,22 @@ pub struct CliBuilder<R: ToolRegistry> {
     about: Option<String>,
     /// Optional application reference.
     instructions: Option<String>,
-    /// Registry marker.
-    marker: PhantomData<R>,
+    /// Registry and invocation context types.
+    marker: PhantomData<fn() -> (R, C)>,
 }
 
-impl<R: ToolRegistry> CliBuilder<R> {
+impl<R: ToolRegistry, C> CliBuilder<R, C> {
+    /// Selects the application context extracted from native invocations.
+    pub fn context<C2: FromCli>(self) -> CliBuilder<R, C2> {
+        CliBuilder {
+            name: self.name,
+            version: self.version,
+            about: self.about,
+            instructions: self.instructions,
+            marker: PhantomData,
+        }
+    }
+
     /// Sets an application summary for short and long root help.
     ///
     /// Recommended for application-specific help. Omitted or whitespace-only summaries
@@ -293,24 +338,27 @@ impl<R: ToolRegistry> CliBuilder<R> {
     }
 
     /// Builds the generated command and schema reconstruction data.
-    pub fn build(self) -> Result<Cli<R>, CliBuildError> {
+    pub fn build(self) -> Result<Cli<R, C>, CliBuildError>
+    where
+        C: FromCli,
+    {
         Cli::from_builder(self)
     }
 }
 
 /// Generated native command-line adapter for a [`ToolRegistry`].
-pub struct Cli<R: ToolRegistry> {
+pub struct Cli<R: ToolRegistry, C = ()> {
     /// Generated root command.
     command: Command,
     /// Analyzed tool definitions.
     tools: Vec<ToolSpec>,
-    /// Registry marker.
-    marker: PhantomData<R>,
+    /// Registry and invocation context types.
+    marker: PhantomData<fn() -> (R, C)>,
 }
 
-impl<R: ToolRegistry> Cli<R> {
+impl<R: ToolRegistry, C: FromCli> Cli<R, C> {
     /// Creates a builder for a standalone or nested generated command.
-    pub fn builder(name: impl Into<String>) -> CliBuilder<R> {
+    pub fn builder(name: impl Into<String>) -> CliBuilder<R, C> {
         CliBuilder {
             name: name.into(),
             version: None,
@@ -321,7 +369,7 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Builds a CLI from its public builder.
-    fn from_builder(builder: CliBuilder<R>) -> Result<Self, CliBuildError> {
+    fn from_builder(builder: CliBuilder<R, C>) -> Result<Self, CliBuildError> {
         let mut problems = Vec::new();
         let root_name = normalize_name(&builder.name).map_err(|()| {
             CliBuildError::new(vec![CliBuildProblem::InvalidName {
@@ -361,7 +409,7 @@ impl<R: ToolRegistry> Cli<R> {
             return Err(CliBuildError::new(problems));
         }
 
-        let command = root_command(root_name, builder, &tools);
+        let command = C::augment_command(root_command(root_name, builder, &tools));
         Ok(Self {
             command,
             tools,
@@ -390,7 +438,7 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Parses an explicit argument iterator and injected whole-input reader.
-    pub fn try_parse_from<I, T, S>(&self, args: I, input: S) -> Result<Invocation<R>, CliError>
+    pub fn try_parse_from<I, T, S>(&self, args: I, input: S) -> Result<Invocation<R, C>, CliError>
     where
         I: IntoIterator<Item = T>,
         T: Into<OsString> + Clone,
@@ -405,7 +453,7 @@ impl<R: ToolRegistry> Cli<R> {
     }
 
     /// Parses process arguments and uses standard input for whole-input JSON.
-    pub fn try_parse(&self) -> Result<Invocation<R>, CliError> {
+    pub fn try_parse(&self) -> Result<Invocation<R, C>, CliError> {
         self.try_parse_from(std::env::args_os(), std::io::stdin().lock())
     }
 
@@ -414,7 +462,7 @@ impl<R: ToolRegistry> Cli<R> {
         &self,
         matches: &ArgMatches,
         mut input: impl Read,
-    ) -> Result<Invocation<R>, CliError> {
+    ) -> Result<Invocation<R, C>, CliError> {
         let output = parse_output_options(matches).map_err(|message| self.usage_error(message))?;
         let json_route = matches
             .try_get_one::<String>("input-json-route")
@@ -448,7 +496,12 @@ impl<R: ToolRegistry> Cli<R> {
 
         let tool = R::parse(&tool.original_name, arguments)
             .map_err(|error| self.usage_error(error.to_string()))?;
-        Ok(Invocation { tool, output })
+        let context = C::from_cli(matches).map_err(|error| self.usage_error(error.to_string()))?;
+        Ok(Invocation {
+            tool,
+            context,
+            output,
+        })
     }
 
     /// Creates a consistently rendered usage error.

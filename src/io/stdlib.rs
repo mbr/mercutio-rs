@@ -21,7 +21,7 @@
 //!         .version("1.0.0")
 //!         .build();
 //!
-//!     run_stdio(server, |_session_id, tool| -> Result<String, Infallible> {
+//!     run_stdio(server, |_context: &(), _session_id, tool| -> Result<String, Infallible> {
 //!         match tool {
 //!             MyTools::GetWeather(input) => {
 //!                 Ok(format!("Weather in {}: sunny", input.city))
@@ -34,7 +34,7 @@
 use std::io::{BufRead, BufReader, Write};
 
 pub use super::IoError;
-use super::McpSessionId;
+use super::{FromStdio, McpSessionId};
 use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 
 /// Runs an MCP server over stdin/stdout.
@@ -47,12 +47,13 @@ use crate::{McpServer, OutgoingMessage, Output, ToolOutput, ToolRegistry};
 ///
 /// Stdout is locked for the duration of this call. Using [`println!`] or other stdout-locking
 /// macros inside the handler will deadlock.
-pub fn run_stdio<R, H, T, E>(server: McpServer<R>, handler: H) -> Result<(), IoError>
+pub fn run_stdio<R, C, H, T, E>(server: McpServer<R>, handler: H) -> Result<(), IoError>
 where
     R: ToolRegistry,
+    C: FromStdio,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
-    H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
+    H: FnMut(&C, Option<McpSessionId>, R) -> Result<T, E>,
 {
     let stdin = std::io::stdin().lock();
     let stdout = std::io::stdout().lock();
@@ -63,17 +64,38 @@ where
 ///
 /// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
 /// custom transports or testing.
-pub fn run_on<R, H, T, E, I, O>(
+pub fn run_on<R, C, H, T, E, I, O>(
+    input: I,
+    output: O,
+    server: McpServer<R>,
+    handler: H,
+) -> Result<(), IoError>
+where
+    R: ToolRegistry,
+    C: FromStdio,
+    T: Into<ToolOutput>,
+    E: std::fmt::Display,
+    H: FnMut(&C, Option<McpSessionId>, R) -> Result<T, E>,
+    I: BufRead,
+    O: Write,
+{
+    let context = C::from_stdio().map_err(|error| IoError::Context(Box::new(error)))?;
+    run_on_with_context(input, output, server, &context, handler)
+}
+
+/// Runs on caller-owned streams with explicitly supplied context.
+pub fn run_on_with_context<R, C, H, T, E, I, O>(
     mut input: I,
     mut output: O,
     mut server: McpServer<R>,
+    context: &C,
     mut handler: H,
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
     T: Into<ToolOutput>,
     E: std::fmt::Display,
-    H: FnMut(Option<McpSessionId>, R) -> Result<T, E>,
+    H: FnMut(&C, Option<McpSessionId>, R) -> Result<T, E>,
     I: BufRead,
     O: Write,
 {
@@ -90,7 +112,7 @@ where
 
         let response = match server.handle(msg) {
             Output::Send(response) => response,
-            Output::ToolCall { tool, responder } => responder.respond(handler(None, tool)),
+            Output::ToolCall { tool, responder } => responder.respond(handler(context, None, tool)),
             Output::ProtocolError(error) => return Err(IoError::Protocol(error)),
             Output::None => continue,
         };
