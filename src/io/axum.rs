@@ -270,48 +270,37 @@ pub const DEFAULT_CAPACITY: usize = 10_000;
 pub const DEFAULT_MIN_EVICTION_AGE: Duration = Duration::from_secs(120);
 
 /// Shared state for axum handlers.
-struct AppState<R: ToolRegistry, H, S, A> {
+struct AppState<R: ToolRegistry, H, S> {
     /// Builder for creating new server instances.
     builder: Arc<McpServerBuilder<R>>,
     /// Session storage.
     storage: Arc<S>,
     /// Handler for tool invocations.
     handler: H,
-    /// Application state supplied to request context extraction.
-    context_state: Arc<A>,
 }
 
-impl<R: ToolRegistry, H: Clone, S, A> Clone for AppState<R, H, S, A> {
+impl<R: ToolRegistry, H: Clone, S> Clone for AppState<R, H, S> {
     fn clone(&self) -> Self {
         Self {
             builder: Arc::clone(&self.builder),
             storage: Arc::clone(&self.storage),
             handler: self.handler.clone(),
-            context_state: Arc::clone(&self.context_state),
         }
     }
 }
 
-/// Extracts context against application state, not private transport state.
+/// Extracts request context without exposing private transport state.
 struct RequestContext<C>(C);
 
-impl<R, H, S, C, A> FromRequestParts<AppState<R, H, S, A>> for RequestContext<C>
+impl<S, C> FromRequestParts<S> for RequestContext<C>
 where
-    R: ToolRegistry + Send + Sync,
-    H: Send + Sync,
     S: Send + Sync,
-    A: Send + Sync,
-    C: FromRequestParts<A> + Send,
+    C: FromRequestParts<()> + Send,
 {
     type Rejection = C::Rejection;
 
-    async fn from_request_parts(
-        parts: &mut Parts,
-        state: &AppState<R, H, S, A>,
-    ) -> Result<Self, Self::Rejection> {
-        C::from_request_parts(parts, &state.context_state)
-            .await
-            .map(Self)
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        C::from_request_parts(parts, &()).await.map(Self)
     }
 }
 
@@ -335,73 +324,56 @@ impl McpRouter {
             builder,
             handler,
             storage: InMemoryStorage::new(DEFAULT_CAPACITY, DEFAULT_MIN_EVICTION_AGE),
-            context_state: (),
             context: PhantomData,
         }
     }
 }
 
 /// Builder for configuring an MCP router.
-pub struct McpRouterBuilder<R: ToolRegistry, H, S, C = (), A = ()> {
+pub struct McpRouterBuilder<R: ToolRegistry, H, S, C = ()> {
     /// Builder for creating new server instances.
     builder: McpServerBuilder<R>,
     /// Handler for tool invocations.
     handler: H,
     /// Session storage.
     storage: S,
-    /// Application state supplied to request context extraction.
-    context_state: A,
     /// Request context type, never retained as session state.
     context: PhantomData<fn() -> C>,
 }
 
-impl<R, H, S, C, A> McpRouterBuilder<R, H, S, C, A>
+impl<R, H, S, C> McpRouterBuilder<R, H, S, C>
 where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
 {
     /// Sets a custom session storage implementation.
-    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2, C, A> {
+    pub fn storage<S2: SessionStorage<R>>(self, storage: S2) -> McpRouterBuilder<R, H, S2, C> {
         McpRouterBuilder {
             builder: self.builder,
             handler: self.handler,
             storage,
-            context_state: self.context_state,
             context: PhantomData,
         }
     }
 
-    /// Supplies application state for [`FromRequestParts`] context extraction.
-    pub fn context_state<A2>(self, state: A2) -> McpRouterBuilder<R, H, S, C, A2> {
-        McpRouterBuilder {
-            builder: self.builder,
-            handler: self.handler,
-            storage: self.storage,
-            context_state: state,
-            context: PhantomData,
-        }
-    }
-
-    /// Builds the router, extracting context for each POST and DELETE.
+    /// Builds the router, extracting context for each POST.
     pub fn build(self) -> Router
     where
-        C: FromRequestParts<A> + Send + Sync + 'static,
-        A: Send + Sync + 'static,
+        C: FromRequestParts<()> + Send + Sync + 'static,
     {
         let state = AppState {
             builder: Arc::new(self.builder),
             storage: Arc::new(self.storage),
             handler: self.handler,
-            context_state: Arc::new(self.context_state),
         };
 
         Router::new()
             .route(
                 "/",
-                post(handle_post::<R, H, S, C, A>)
+                post(handle_post::<R, H, S, C>)
                     .get(handle_get)
-                    .delete(handle_delete::<R, H, S, C, A>),
+                    .delete(handle_delete::<R, H, S>),
             )
             .with_state(state)
     }
@@ -424,8 +396,8 @@ where
 }
 
 /// Handles POST requests (client messages).
-async fn handle_post<R, H, S, C, A>(
-    State(state): State<AppState<R, H, S, A>>,
+async fn handle_post<R, H, S, C>(
+    State(state): State<AppState<R, H, S>>,
     OptionalSessionId(session_id): OptionalSessionId,
     RequestContext(context): RequestContext<C>,
     body: Bytes,
@@ -434,8 +406,7 @@ where
     R: ToolRegistry + Send + Sync + 'static,
     H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
-    C: FromRequestParts<A> + Send + Sync + 'static,
-    A: Send + Sync + 'static,
+    C: FromRequestParts<()> + Send + Sync + 'static,
 {
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s,
@@ -474,8 +445,8 @@ async fn handle_get() -> Response {
 }
 
 /// Handles a message for a session.
-async fn handle_session<R, H, S, C, A>(
-    state: &AppState<R, H, S, A>,
+async fn handle_session<R, H, S, C>(
+    state: &AppState<R, H, S>,
     context: &C,
     session_id: McpSessionId,
     msg: rust_mcp_schema::JsonrpcMessage,
@@ -485,7 +456,6 @@ where
     H: ToolHandler<R, C> + Clone + 'static,
     S: SessionStorage<R>,
     C: Sync,
-    A: Send + Sync,
 {
     let output = match state
         .storage
@@ -544,17 +514,14 @@ fn json_response(msg: &crate::OutgoingMessage, session_id: McpSessionId) -> Resp
 }
 
 /// Handles DELETE requests (session termination).
-async fn handle_delete<R, H, S, C, A>(
-    State(state): State<AppState<R, H, S, A>>,
+async fn handle_delete<R, H, S>(
+    State(state): State<AppState<R, H, S>>,
     session_id: McpSessionId,
-    RequestContext(_context): RequestContext<C>,
 ) -> Response
 where
     R: ToolRegistry + Send + Sync + 'static,
-    H: ToolHandler<R, C> + Clone + 'static,
+    H: Clone + Send + Sync + 'static,
     S: SessionStorage<R>,
-    C: FromRequestParts<A> + Send + Sync + 'static,
-    A: Send + Sync + 'static,
 {
     if state.storage.remove(session_id).await {
         StatusCode::NO_CONTENT.into_response()

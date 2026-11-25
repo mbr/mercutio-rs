@@ -176,7 +176,7 @@ async fn handle(
 }
 ```
 
-HTTP extracts context per request through Axum's `FromRequestParts<S>`; supply application state with `McpRouter::builder(...).context_state(state)`. Stdio uses `io::FromStdio` once at startup, or accepts context through `run_on_with_context`. CLI uses `cli::FromCli` to add context options and extract their values, selected with `Tools::cli("tools").context::<Context>()`.
+HTTP extracts context per POST request through Axum's `FromRequestParts<()>`. Stdio uses `io::FromStdio` once at startup. CLI uses `cli::FromCli` to add context options and extract their values, selected with `Tools::cli("tools").context::<Context>()`.
 
 ## Testing
 

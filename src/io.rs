@@ -24,7 +24,6 @@ use crate::{ParseError, ProtocolError, ToolOutput, ToolRegistry};
 /// Extracts application context once before processing a stdio stream.
 ///
 /// May read configuration, but must not consume stdin or write stdout.
-/// Use `run_on_with_context` to supply an already constructed context instead.
 pub trait FromStdio: Sized {
     /// Error returned when startup context cannot be constructed.
     type Error: StdError + Send + Sync + 'static;

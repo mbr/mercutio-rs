@@ -65,10 +65,10 @@ where
 /// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
 /// custom transports or testing.
 pub fn run_on<R, C, H, T, E, I, O>(
-    input: I,
-    output: O,
-    server: McpServer<R>,
-    handler: H,
+    mut input: I,
+    mut output: O,
+    mut server: McpServer<R>,
+    mut handler: H,
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
@@ -80,25 +80,6 @@ where
     O: Write,
 {
     let context = C::from_stdio().map_err(|error| IoError::Context(Box::new(error)))?;
-    run_on_with_context(input, output, server, &context, handler)
-}
-
-/// Runs on caller-owned streams with explicitly supplied context.
-pub fn run_on_with_context<R, C, H, T, E, I, O>(
-    mut input: I,
-    mut output: O,
-    mut server: McpServer<R>,
-    context: &C,
-    mut handler: H,
-) -> Result<(), IoError>
-where
-    R: ToolRegistry,
-    T: Into<ToolOutput>,
-    E: std::fmt::Display,
-    H: FnMut(&C, Option<McpSessionId>, R) -> Result<T, E>,
-    I: BufRead,
-    O: Write,
-{
     let mut line = String::new();
 
     loop {
@@ -112,7 +93,9 @@ where
 
         let response = match server.handle(msg) {
             Output::Send(response) => response,
-            Output::ToolCall { tool, responder } => responder.respond(handler(context, None, tool)),
+            Output::ToolCall { tool, responder } => {
+                responder.respond(handler(&context, None, tool))
+            }
             Output::ProtocolError(error) => return Err(IoError::Protocol(error)),
             Output::None => continue,
         };

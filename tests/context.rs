@@ -267,7 +267,7 @@ mod stdio {
         }
     }
 
-    /// Supports startup and supplied context, rejecting before reading input.
+    /// Extracts startup context, rejecting before reading input.
     #[cfg(feature = "io-stdlib")]
     #[test]
     fn synchronous_context() {
@@ -283,17 +283,6 @@ mod stdio {
         )
         .expect("stdio context");
         assert_reports(&output, "stdio");
-
-        output.clear();
-        mercutio::io::stdlib::run_on_with_context(
-            Cursor::new(INPUT),
-            &mut output,
-            McpServer::builder().build(),
-            &Context::new("provided"),
-            |context, _, _: ReadContext| Ok::<_, io::Error>(context.report()),
-        )
-        .expect("provided context");
-        assert_reports(&output, "provided");
 
         let mut input = Cursor::new(INPUT);
         let error = mercutio::io::stdlib::run_on(
@@ -324,18 +313,6 @@ mod stdio {
         .expect("stdio context");
         assert_reports(&output, "stdio");
 
-        output.clear();
-        mercutio::io::tokio::run_on_with_context(
-            Cursor::new(INPUT),
-            &mut output,
-            McpServer::builder().build(),
-            &Context::new("provided"),
-            Handler,
-        )
-        .await
-        .expect("provided context");
-        assert_reports(&output, "provided");
-
         let mut input = Cursor::new(INPUT);
         let error = mercutio::io::tokio::run_on(
             &mut input,
@@ -352,7 +329,7 @@ mod stdio {
 
 #[cfg(feature = "io-axum")]
 mod http {
-    //! Checks request extraction against application-owned state.
+    //! Checks context extraction from each HTTP request.
 
     use std::time::Duration;
 
@@ -373,12 +350,6 @@ mod http {
 
     use super::{Context, Handler};
 
-    /// State deliberately distinct from the tool handler and private router state.
-    struct ApplicationState {
-        /// Prefix applied while constructing request context.
-        prefix: &'static str,
-    }
-
     /// Application selection supplied afresh on each request.
     #[derive(Deserialize)]
     struct Selection {
@@ -386,17 +357,17 @@ mod http {
         project: String,
     }
 
-    impl FromRequestParts<ApplicationState> for Context {
+    impl FromRequestParts<()> for Context {
         type Rejection = StatusCode;
 
         async fn from_request_parts(
             parts: &mut Parts,
-            state: &ApplicationState,
+            state: &(),
         ) -> Result<Self, Self::Rejection> {
             let Query(selection) = Query::<Selection>::from_request_parts(parts, state)
                 .await
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
-            Ok(Self::new(format!("{}{}", state.prefix, selection.project)))
+            Ok(Self::new(selection.project))
         }
     }
 
@@ -417,9 +388,6 @@ mod http {
     #[tokio::test]
     async fn request_context_is_not_session_state() {
         let router = McpRouter::builder(McpServer::builder(), Handler)
-            .context_state(ApplicationState {
-                prefix: "selected:",
-            })
             .storage(InMemoryStorage::new(1, Duration::from_secs(60)))
             .build();
         let initialize = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
@@ -463,7 +431,7 @@ mod http {
             let result: Value = serde_json::from_slice(&bytes).expect("JSON");
             assert_eq!(
                 result["result"]["content"][0]["text"],
-                format!("selected:{project}:0")
+                format!("{project}:0")
             );
         }
         assert_eq!(
@@ -471,10 +439,7 @@ mod http {
             StatusCode::BAD_REQUEST,
             "a prior request must not supply a missing project"
         );
-        for (uri, status) in [
-            ("/", StatusCode::BAD_REQUEST),
-            ("/?project=marc%2Fgeneral", StatusCode::NO_CONTENT),
-        ] {
+        for (uri, status) in [("/", StatusCode::NO_CONTENT), ("/", StatusCode::NOT_FOUND)] {
             let response = router
                 .clone()
                 .oneshot(

@@ -85,10 +85,10 @@ where
 /// For most use cases, prefer [`run_stdio`] which handles stdin/stdout. Use this function for
 /// custom transports or testing.
 pub async fn run_on<R, C, H, I, O>(
-    input: I,
-    output: O,
-    server: McpServer<R>,
-    handler: H,
+    mut input: I,
+    mut output: O,
+    mut server: McpServer<R>,
+    mut handler: H,
 ) -> Result<(), IoError>
 where
     R: ToolRegistry,
@@ -98,23 +98,6 @@ where
     O: AsyncWriteExt + Unpin,
 {
     let context = C::from_stdio().map_err(|error| IoError::Context(Box::new(error)))?;
-    run_on_with_context(input, output, server, &context, handler).await
-}
-
-/// Runs on caller-owned streams with explicitly supplied context.
-pub async fn run_on_with_context<R, C, H, I, O>(
-    mut input: I,
-    mut output: O,
-    mut server: McpServer<R>,
-    context: &C,
-    mut handler: H,
-) -> Result<(), IoError>
-where
-    R: ToolRegistry,
-    H: MutToolHandler<R, C>,
-    I: AsyncBufReadExt + Unpin,
-    O: AsyncWriteExt + Unpin,
-{
     let mut line = String::new();
 
     loop {
@@ -129,7 +112,7 @@ where
         let response = match server.handle(msg) {
             Output::Send(response) => response,
             Output::ToolCall { tool, responder } => {
-                responder.respond(handler.handle(context, None, tool).await)
+                responder.respond(handler.handle(&context, None, tool).await)
             }
             Output::ProtocolError(error) => return Err(IoError::Protocol(error)),
             Output::None => continue,
