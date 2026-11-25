@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-11-25
+
+Stable release of the native CLI, application context, and context-dependent MCP instructions introduced in the `0.9.0` prereleases. No API changes since `0.9.0-alpha.3`; see its migration notes below when upgrading from `0.8.0`.
+
 ## [0.9.0-alpha.3] - 2026-11-25
 
 ### Added
@@ -197,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.3...HEAD
+[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0...HEAD
+[0.9.0]: https://github.com/mbr/mercutio-rs/compare/0.8.0...0.9.0
 [0.9.0-alpha.3]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.2...0.9.0-alpha.3
 [0.9.0-alpha.2]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.1...0.9.0-alpha.2
 [0.9.0-alpha.1]: https://github.com/mbr/mercutio-rs/compare/0.8.0...0.9.0-alpha.1
