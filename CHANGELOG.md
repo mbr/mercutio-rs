@@ -9,18 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add context extraction through `FromRequestParts<()>`, `io::FromStdio`, and `cli::FromCli`.
+- Applications can provide context, such as a project selection, separately from tool arguments. HTTP extracts it per POST using `FromRequestParts<()>`, stdio once at startup using `io::FromStdio`, and CLI per invocation using `cli::FromCli`. Applications without context use `()`.
 
 ### Changed
 
-- Generate MCP server instructions from context callbacks.
-- Pass context to tool handlers and runner closures.
-- Include context in CLI `Invocation::into_parts()`.
+- `ToolHandler::handle`, `MutToolHandler::handle`, and runner closures now receive `&context` before the session ID and tool arguments. Context-free handlers must accept an initial `&()` argument.
+- `McpServerBuilder::instructions` now takes a callback instead of a string. The callback receives the initialization context. For fixed text, use `.instructions(|_| "Instructions.".to_owned())`. CLI help's string-based `.instructions(...)` setter is unchanged.
+- CLI `Invocation::into_parts()` now returns `(tool, context, output_options)` instead of `(tool, output_options)`.
 
 ### Fixed
 
-- Reject collisions with visible or hidden application subcommand aliases when attaching a generated CLI.
-- Explain scalar-versus-object union exclusivity and branch selection in the scalar option's long help, without a separate appendix or repeated flag lists.
+- Reject subcommand alias collisions when attaching a generated CLI, including hidden aliases.
+- CLI help now explains how to choose between scalar and object forms of a union argument.
 
 ## [0.9.0-alpha.2] - 2026-10-04
 
