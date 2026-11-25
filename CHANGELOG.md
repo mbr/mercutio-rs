@@ -9,12 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Extract application-defined invocation context with Axum's `FromRequestParts<S>`, `io::FromStdio`, or `cli::FromCli`. HTTP extracts per request against application state; stdio extracts once at startup; CLI extracts once per invocation. Both stdio transports also accept caller-supplied context.
+- Add context extraction through `FromRequestParts<S>`, `io::FromStdio`, and `cli::FromCli`.
 
 ### Changed
 
-- **Breaking:** `ToolHandler<R, C = ()>` and `MutToolHandler<R, C = ()>` receive `&C` before the session ID and tool. Runner closures likewise receive context first; context-free handlers use `&()`.
-- **Breaking:** CLI `Invocation::into_parts()` returns `(tool, context, output_options)`. Select a context type with `CliBuilder::context::<C>()`; tool discovery and parsing remain static.
+- Pass context to tool handlers and runner closures.
+- Include context in CLI `Invocation::into_parts()`.
 
 ### Fixed
 
