@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0-alpha.3] - 2026-11-25
+
 ### Added
 
 - Applications can provide context, such as a project selection, separately from tool arguments. HTTP extracts it per POST using `FromRequestParts<()>`, stdio once at startup using `io::FromStdio`, and CLI per invocation using `cli::FromCli`. Applications without context use `()`.
@@ -195,7 +197,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Initial release.
 
-[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.2...HEAD
+[Unreleased]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.3...HEAD
+[0.9.0-alpha.3]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.2...0.9.0-alpha.3
 [0.9.0-alpha.2]: https://github.com/mbr/mercutio-rs/compare/0.9.0-alpha.1...0.9.0-alpha.2
 [0.9.0-alpha.1]: https://github.com/mbr/mercutio-rs/compare/0.8.0...0.9.0-alpha.1
 [0.8.0]: https://github.com/mbr/mercutio-rs/compare/0.7.2...0.8.0
